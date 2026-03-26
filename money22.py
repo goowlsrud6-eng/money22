@@ -2,183 +2,164 @@ import streamlit as st
 import pandas as pd
 import sqlite3
 from datetime import datetime
-import numpy as np
+import plotly.express as px
 
 # 1. 페이지 설정
-st.set_page_config(page_title="자금 관리 시스템 v6", layout="wide", page_icon="💰")
+st.set_page_config(page_title="자금 관리 시스템 v8", layout="wide", page_icon="💰")
 
-# 2. DB 연결 및 초기화
+# 2. DB 설정 및 초기화
 @st.cache_resource
 def get_db_connection():
-    conn = sqlite3.connect('money_management_v6.db', check_same_thread=False)
+    conn = sqlite3.connect('finance_v8.db', check_same_thread=False)
     c = conn.cursor()
-    # 테이블 구조 생성 (마감여부, 환산금액 등 포함)
-    c.execute('''CREATE TABLE IF NOT EXISTS history 
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT, 
-                  거래처 TEXT, 발주차수 TEXT, 유형 TEXT, 통화 TEXT, 상품명 TEXT, 
-                  입금일 TEXT, 입금액 REAL, 선급금 REAL, 송금사유 TEXT, 
-                  한화환산액 REAL, 마감여부 INTEGER DEFAULT 0)''')
+    # 발주 마스터: 유형(type) 필드 추가
+    c.execute('''CREATE TABLE IF NOT EXISTS orders 
+                 (order_id TEXT PRIMARY KEY, order_date TEXT, vendor TEXT, 
+                  product TEXT, category TEXT, currency TEXT, total_amt REAL, is_closed INTEGER DEFAULT 0)''')
+    # 입금 내역
+    c.execute('''CREATE TABLE IF NOT EXISTS payments 
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT, order_id TEXT, pay_date TEXT, 
+                  deposit REAL, advance REAL, note TEXT, krw_val REAL)''')
     conn.commit()
     return conn
 
 conn = get_db_connection()
+CATEGORIES = ["제작(국내)", "제작(수입)", "사입", "건기식", "물품대", "물류비"]
+CURRENCIES = ["KRW", "USD", "CNY"]
 
-# 3. 가상 환율 데이터 (실제 운영 시 API 연동 가능, 현재는 월평균 가정치)
-def get_monthly_exchange_rate(date_str, currency):
-    if currency == "한화" or not currency: return 1.0
-    # 예시: 월별 고정 환율 (실제로는 로직에 따라 계산된 값 입력)
-    rates = {
-        "달러": {"01": 1320, "02": 1340, "03": 1350},
-        "위안": {"01": 185, "02": 188, "03": 190}
-    }
-    month = date_str.split("-")[1]
-    return rates.get(currency, {}).get(month, 1300 if currency == "달러" else 180)
+# --- 환율 로직 (입금월 기준) ---
+def get_exchange_rate(date_obj, currency):
+    if currency in ["KRW", "한화"] or not currency: return 1.0
+    # 실제 운영 시 월평균 환율 계산 로직으로 대체 가능
+    rates = {"USD": 1350.0, "CNY": 190.0} 
+    return rates.get(currency, 1.0)
 
-# 4. 데이터 로드
-def load_data():
-    df = pd.read_sql("SELECT * FROM history", conn)
-    df['입금일'] = pd.to_datetime(df['입금일'])
-    return df
+# --- 데이터 로드 ---
+def load_orders():
+    return pd.read_sql("SELECT * FROM orders", conn)
 
-df_all = load_data()
+def load_payments():
+    return pd.read_sql("SELECT * FROM payments", conn)
 
-# --- 사이드바 필터 영역 ---
-st.sidebar.header("🔍 상세 필터 및 구분")
-view_mode = st.sidebar.radio("구분 모드", ["업체별 구분", "유형별 구분"])
+st.title("💰 자금 관리 시스템 v8 (유형별/상태별 관리)")
 
-# 필터 공통 요소
-all_vendors = sorted(df_all['거래처'].unique()) if not df_all.empty else []
-all_types = ["제작(국내)", "제작(수입)", "사입", "건기식", "물품대", "물류비"]
+tab1, tab2, tab3, tab4 = st.tabs(["📥 발주 등록(ERP)", "💸 입금 기록", "🔍 상세 내역 관리", "📊 현황 대시보드"])
 
-if view_mode == "업체별 구분":
-    sel_vendor = st.sidebar.selectbox("거래처 선택", ["전체"] + all_vendors)
-    filtered_df = df_all if sel_vendor == "전체" else df_all[df_all['거래처'] == sel_vendor]
-else:
-    sel_type = st.sidebar.selectbox("유형 선택", ["전체"] + all_types)
-    filtered_df = df_all if sel_type == "전체" else df_all[df_all['유형'] == sel_type]
-
-# 날짜 및 품목 추가 필터
-if not filtered_df.empty:
-    search_product = st.sidebar.text_input("상품명 검색")
-    sort_order = st.sidebar.selectbox("날짜 정렬", ["내림차순", "오름차순"])
-    
-    if search_product:
-        filtered_df = filtered_df[filtered_df['상품명'].str.contains(search_product, na=False)]
-    
-    filtered_df = filtered_df.sort_values(by="입금일", ascending=(sort_order == "오름차순"))
-
-# --- 메인 화면 ---
-tab1, tab2, tab3 = st.tabs(["📂 엑셀 일괄 업로드", "📋 상세 내역 관리", "📝 개별 입력"])
-
-# --- Tab 1: 엑셀 업로드 ---
+# --- Tab 1: 발주서 등록 (유형 구분 포함) ---
 with tab1:
-    st.subheader("📂 한글 양식 업로드")
-    
-    # 양식 다운로드
-    template_cols = ["입금일", "거래처", "발주차수", "유형", "통화", "상품명", "입금액", "선급금", "송금사유"]
-    tmp_df = pd.DataFrame(columns=template_cols)
-    st.download_button("📥 한글 업로드 양식 받기", tmp_df.to_csv(index=False).encode('utf-8-sig'), "양식.csv")
-    
-    up_file = st.file_uploader("CSV 파일 업로드", type=['csv'])
-    if up_file:
-        up_df = pd.read_csv(up_file)
-        if st.button("🚀 데이터 일괄 저장"):
-            for _, row in up_df.iterrows():
-                curr = row['통화'] if pd.notna(row['통화']) else "한화"
-                rate = get_monthly_exchange_rate(str(row['입금일']), curr)
-                krw_val = float(row['입금액']) * rate
-                
-                cur = conn.cursor()
-                cur.execute('''INSERT INTO history (입금일, 거래처, 발주차수, 유형, 통화, 상품명, 입금액, 선급금, 송금사유, 한화환산액) 
-                               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
-                            (row['입금일'], row['거래처'], row['발주차수'], row['유형'], curr, row['상품명'], 
-                             row['입금액'], row['선급금'], row['송금사유'], krw_val))
-            conn.commit()
-            st.success("업로드 완료!")
-            st.rerun()
-
-# --- Tab 2: 상세 내역 관리 (핵심 기능) ---
-with tab2:
-    if not filtered_df.empty:
-        # 요약 정보 (업체별일 때 잔여 선급금 등 계산)
-        if view_mode == "업체별 구분" and sel_vendor != "전체":
-            col1, col2 = st.columns(2)
-            total_dep = filtered_df['입금액'].sum()
-            total_adv = filtered_df['선급금'].sum()
-            col1.metric("총 입금액", f"{total_dep:,.0f}")
-            col2.metric("잔여 선급금 합계", f"{total_adv:,.0f}")
-
-        st.markdown("---")
-        
-        # 마감 처리를 위한 가시화 (스타일링 함수)
-        def highlight_closed(row):
-            if row['마감여부'] == 1:
-                return ['background-color: #e0e0e0; color: #9e9e9e'] * len(row)
-            return [''] * len(row)
-
-        # 데이터 에디터
-        st.write("💡 **마감여부**를 체크(1)하면 해당 행이 회색으로 표시됩니다.")
-        edited_df = st.data_editor(
-            filtered_df,
-            column_config={
-                "마감여부": st.column_config.CheckboxColumn("마감", default=False),
-                "입금일": st.column_config.DateColumn("입금일"),
-                "입금액": st.column_config.NumberColumn("입금액", format="%f"),
-                "한화환산액": st.column_config.NumberColumn("한화 환산(월평균)", disabled=True)
-            },
-            use_container_width=True,
-            num_rows="dynamic",
-            key="main_editor"
-        )
-
-        # 스타일 적용된 테이블 보기 (가시화 전용)
-        st.subheader("👀 가시화 뷰 (마감건 확인)")
-        st.dataframe(edited_df.style.apply(highlight_closed, axis=1), use_container_width=True)
-
-        if st.button("💾 변경사항 최종 저장"):
-            # 기존 필터링된 데이터 기반으로 전체 DB 업데이트 로직 (id 기준)
-            for _, row in edited_df.iterrows():
-                cur = conn.cursor()
-                cur.execute('''UPDATE history SET 
-                               거래처=?, 발주차수=?, 유형=?, 통화=?, 상품명=?, 
-                               입금일=?, 입금액=?, 선급금=?, 송금사유=?, 마감여부=? 
-                               WHERE id=?''', 
-                            (row['거래처'], row['발주차수'], row['유형'], row['통화'], row['상품명'], 
-                             str(row['입금일'])[:10], row['입금액'], row['선급금'], row['송금사유'], row['마감여부'], row['id']))
-            conn.commit()
-            st.success("저장되었습니다.")
-            st.rerun()
-            
-        # 엑셀 다운로드
-        csv_download = edited_df.to_csv(index=False).encode('utf-8-sig')
-        st.download_button("📥 현재 리스트 엑셀(CSV) 다운로드", csv_download, f"detail_{datetime.now().strftime('%m%d')}.csv")
-    else:
-        st.info("조건에 맞는 데이터가 없습니다.")
-
-# --- Tab 3: 개별 입력 ---
-with tab3:
-    with st.form("single_input"):
+    st.header("📄 이카운트 발주서 등록")
+    with st.expander("신규 발주 정보 입력 (또는 엑셀 파싱)", expanded=True):
         c1, c2, c3 = st.columns(3)
-        v = c1.text_input("거래처명")
-        o = c2.text_input("발주차수 (예: 초도2차)")
-        t = c3.selectbox("유형", all_types)
+        order_id = c1.text_input("발주번호 (ERP 전표번호)")
+        order_date = c2.date_input("발주일", datetime.now())
+        category = c3.selectbox("업무 유형", CATEGORIES)
         
         c4, c5, c6 = st.columns(3)
-        curr = c4.selectbox("통화", ["한화", "달러", "위안"])
-        prod = c5.text_input("상품명")
-        dt = c6.date_input("입금일")
+        vendor = c4.text_input("거래처명")
+        product = c5.text_input("상품명")
+        curr = c6.selectbox("통화", CURRENCIES)
         
-        c7, c8, c9 = st.columns(3)
-        amt = c7.number_input("입금액", min_value=0.0)
-        adv = c8.number_input("선급금", min_value=0.0)
-        memo = c9.text_input("송금사유(메모)")
+        total_amt = st.number_input("발주 총액 (외화 또는 한화)", min_value=0.0)
         
-        if st.form_submit_button("저장"):
-            rate = get_monthly_exchange_rate(dt.strftime("%Y-%m-%d"), curr)
-            krw_val = amt * rate
-            cur = conn.cursor()
-            cur.execute('''INSERT INTO history (입금일, 거래처, 발주차수, 유형, 통화, 상품명, 입금액, 선급금, 송금사유, 한화환산액) 
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
-                        (dt.strftime("%Y-%m-%d"), v, o, t, curr, prod, amt, adv, memo, krw_val))
-            conn.commit()
-            st.rerun()
+        if st.button("🚀 발주 마스터 저장", use_container_width=True):
+            if order_id and vendor:
+                cur = conn.cursor()
+                cur.execute("INSERT OR REPLACE INTO orders VALUES (?, ?, ?, ?, ?, ?, ?, 0)", 
+                            (order_id, order_date.strftime("%Y-%m-%d"), vendor, product, category, curr, total_amt))
+                conn.commit()
+                st.success(f"[{category}] {vendor} 발주 건이 등록되었습니다.")
+                st.rerun()
+
+# --- Tab 2: 입금 기록 (진행 중인 건만 표시) ---
+with tab2:
+    st.header("📝 입금 내역 입력")
+    orders = load_orders()
+    active_orders = orders[orders['is_closed'] == 0]
+    
+    if not active_orders.empty:
+        with st.form("payment_form", clear_on_submit=True):
+            # 선택 창에 유형(category)을 함께 표시하여 구분 용이하게 함
+            selected_oid = st.selectbox("진행 중인 발주 선택", 
+                                        options=active_orders['order_id'],
+                                        format_func=lambda x: f"[{active_orders[active_orders['order_id']==x]['category'].values[0]}] {active_orders[active_orders['order_id']==x]['vendor'].values[0]} - {x}")
+            
+            c1, c2, c3 = st.columns(3)
+            p_date = c1.date_input("입금일")
+            dep_amt = c2.number_input("이번 입금액", min_value=0.0)
+            adv_amt = c3.number_input("선급금 변동", value=0.0)
+            p_note = st.text_input("송금 사유")
+            
+            if st.form_submit_button("💰 입금 저장"):
+                order_info = active_orders[active_orders['order_id'] == selected_oid].iloc[0]
+                rate = get_exchange_rate(p_date, order_info['currency'])
+                krw_val = dep_amt * rate
+                
+                cur = conn.cursor()
+                cur.execute("INSERT INTO payments (order_id, pay_date, deposit, advance, note, krw_val) VALUES (?, ?, ?, ?, ?, ?)",
+                            (selected_oid, p_date.strftime("%Y-%m-%d"), dep_amt, adv_amt, p_note, krw_val))
+                conn.commit()
+                st.success("입금 내역이 DB에 반영되었습니다.")
+    else:
+        st.info("현재 진행 중인(미마감) 발주 건이 없습니다.")
+
+# --- Tab 3: 상세 내역 관리 (진행/마감 분리 및 회색 음영) ---
+with tab3:
+    st.header("🔍 상세 내역 및 마감 처리")
+    
+    all_orders = load_orders()
+    all_payments = load_payments()
+    
+    col_filter1, col_filter2 = st.columns(2)
+    view_status = col_filter1.radio("상태 필터", ["진행 중", "마감 완료"], horizontal=True)
+    view_category = col_filter2.multiselect("유형 필터", CATEGORIES, default=CATEGORIES)
+    
+    is_closed_flag = 1 if view_status == "마감 완료" else 0
+    display_orders = all_orders[(all_orders['is_closed'] == is_closed_flag) & (all_orders['category'].isin(view_category))]
+    
+    if not display_orders.empty:
+        for idx, row in display_orders.iterrows():
+            # 마감 건은 시각적으로 구분 (Expand 배경색 등은 테마에 따라 다름)
+            title_prefix = "✅ [마감]" if is_closed_flag == 1 else "⏳ [진행]"
+            with st.expander(f"{title_prefix} {row['category']} | {row['vendor']} | {row['product']} ({row['order_id']})"):
+                
+                # 해당 발주 건의 모든 입금 내역
+                related_pays = all_payments[all_payments['order_id'] == row['order_id']]
+                total_deposit = related_pays['deposit'].sum()
+                balance = row['total_amt'] - total_deposit
+                
+                # 요약 지표
+                m1, m2, m3 = st.columns(3)
+                m1.metric("발주 총액", f"{row['total_amt']:,.2f} {row['currency']}")
+                m2.metric("누적 입금", f"{total_deposit:,.2f}")
+                m3.metric("미결제 잔액", f"{balance:,.2f}", delta=-total_deposit)
+                
+                # 상세 내역 테이블
+                st.dataframe(related_pays.drop(columns=['id', 'order_id']), use_container_width=True)
+                
+                # 마감/해제 버튼
+                if is_closed_flag == 0:
+                    if st.button(f"🚩 마감하기 ({row['order_id']})"):
+                        conn.cursor().execute("UPDATE orders SET is_closed = 1 WHERE order_id = ?", (row['order_id'],))
+                        conn.commit()
+                        st.rerun()
+                else:
+                    st.caption("이 건은 마감되어 수정이 제한됩니다.")
+                    if st.button(f"🔓 마감 취소 ({row['order_id']})"):
+                        conn.cursor().execute("UPDATE orders SET is_closed = 0 WHERE order_id = ?", (row['order_id'],))
+                        conn.commit()
+                        st.rerun()
+    else:
+        st.write("해당 조건의 데이터가 없습니다.")
+
+# --- Tab 4: 현황 대시보드 (유형별 합계) ---
+with tab4:
+    st.header("📊 업무 유형별 지출 현황")
+    if not all_payments.empty:
+        # 발주 정보와 입금 내역 결합
+        df_dash = all_payments.merge(all_orders[['order_id', 'category', 'vendor']], on='order_id')
+        
+        fig = px.pie(df_dash, values='krw_val', names='category', title="유형별 지출 비중 (한화 환산 기준)")
+        st.plotly_chart(fig, use_container_width=True)
+        
+        fig2 = px.bar(df_dash, x='category', y='krw_val', color='vendor', title="유형별/거래처별 지출 금액")
+        st.plotly_chart(fig2, use_container_width=True)
