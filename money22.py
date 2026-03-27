@@ -6,155 +6,133 @@ import shutil
 from datetime import datetime
 import plotly.express as px
 
-# --- 1. 데이터 안전장치 (자동 백업 로직) ---
+# --- 1. 데이터 안전장치 (자동 백업) ---
 def run_backup():
     if not os.path.exists('backups'):
         os.makedirs('backups')
-    
-    # 오늘 날짜로 백업 파일명 생성
     today_str = datetime.now().strftime("%Y%m%d")
-    db_file = 'finance_v10.db'
+    db_file = 'finance_v11.db'
     backup_file = f"backups/backup_{today_str}.db"
-    
     if os.path.exists(db_file) and not os.path.exists(backup_file):
         shutil.copy2(db_file, backup_file)
         return True
     return False
 
-# 2. 페이지 설정 및 백업 실행
-st.set_page_config(page_title="자금 관리 시스템 v10", layout="wide", page_icon="💰")
-backup_status = run_backup()
+# 2. 페이지 설정
+st.set_page_config(page_title="자금 관리 시스템 v11", layout="wide", page_icon="💰")
+run_backup()
 
-# 3. DB 연결
+# 3. DB 연결 및 테이블 구조 (발주번호 중심)
 @st.cache_resource
 def get_db_connection():
-    conn = sqlite3.connect('finance_v10.db', check_same_thread=False)
+    conn = sqlite3.connect('finance_v11.db', check_same_thread=False)
     c = conn.cursor()
-    # 발주 마스터
+    # 발주 마스터 (is_closed로 진행/마감 구분)
     c.execute('''CREATE TABLE IF NOT EXISTS orders 
                  (order_id TEXT PRIMARY KEY, order_date TEXT, vendor TEXT, 
                   product TEXT, category TEXT, currency TEXT, total_amt REAL, is_closed INTEGER DEFAULT 0)''')
-    # 입금 내역 (기존 엑셀 양식 컬럼 준수)
+    # 입금 내역 (발주번호 연동)
     c.execute('''CREATE TABLE IF NOT EXISTS payments 
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, order_id TEXT, pay_date TEXT, 
-                  category TEXT, vendor TEXT, product TEXT, currency TEXT,
                   deposit REAL, advance REAL, note TEXT, krw_val REAL)''')
     conn.commit()
     return conn
 
 conn = get_db_connection()
-CATEGORIES = ["제작(국내)", "제작(수입)", "사입", "건기식", "물품대", "물류비"]
-CURRENCIES = ["한화", "USD", "CNY"]
 
-# --- 공통 데이터 로드 ---
-def load_df(table_name):
-    return pd.read_sql(f"SELECT * FROM {table_name}", conn)
-
-# 상단 알림
-if backup_status:
-    st.toast("✅ 오늘자 데이터 자동 백업 완료!", icon="💾")
+# --- 환율 로직 ---
+def get_exchange_rate(currency):
+    rates = {"USD": 1350.0, "CNY": 190.0, "한화": 1.0, "KRW": 1.0}
+    return rates.get(currency, 1.0)
 
 # --- 메인 화면 ---
-st.title("💰 자금 관리 및 보고 시스템 v10")
+st.title("💰 자금 관리 시스템 v11")
+tabs = st.tabs(["📥 발주서 등록(Master)", "📂 입금 내역 업로드", "🔍 상세 정산 관리", "📊 보고 대시보드"])
 
-tabs = st.tabs(["📥 발주서 등록", "📂 입금 엑셀 업로드", "🔍 상세 내역 관리", "📊 보고용 대시보드"])
-
-# --- Tab 1: 발주서 등록 (이카운트 기반) ---
+# --- Tab 1: 발주서 등록 (다품목 대응) ---
 with tabs[0]:
-    st.header("📄 발주서(Master) 등록")
-    with st.form("order_form"):
+    st.header("📄 발주 마스터 등록 (이카운트 기준)")
+    with st.form("order_reg"):
         c1, c2, c3 = st.columns(3)
-        oid = c1.text_input("발주번호 (ERP 전표번호)")
+        oid = c1.text_input("발주번호 (ERP 전표번호)", help="이 번호가 모든 데이터의 연결 고리가 됩니다.")
         odate = c2.date_input("발주일", datetime.now())
-        ocat = c3.selectbox("유형", CATEGORIES)
+        ocat = c3.selectbox("유형", ["제작(국내)", "제작(수입)", "사입", "건기식", "물품대", "물류비"])
         
         c4, c5, c6 = st.columns(3)
         ovendor = c4.text_input("거래처명")
-        oprod = c5.text_input("상품명")
-        ocurr = c6.selectbox("발주 통화", CURRENCIES)
+        oprod = c5.text_input("대표 상품명 (예: 품목 외 n건)")
+        ocurr = c6.selectbox("통화", ["한화", "USD", "CNY"])
         
-        ototal = st.number_input("발주 총액", min_value=0.0)
-        if st.form_submit_button("🚀 발주 정보 저장"):
+        ototal = st.number_input("발주 합계 금액 (전표 총액)", min_value=0.0)
+        
+        if st.form_submit_button("🚀 발주서 정보 저장"):
             if oid and ovendor:
                 conn.cursor().execute("INSERT OR REPLACE INTO orders VALUES (?, ?, ?, ?, ?, ?, ?, 0)", 
                                      (oid, odate.strftime("%Y-%m-%d"), ovendor, oprod, ocat, ocurr, ototal))
                 conn.commit()
-                st.success(f"발주번호 {oid} 등록 완료")
+                st.success(f"발주번호 {oid} 등록 완료!")
 
-# --- Tab 2: 입금 엑셀 업로드 (기존 방식 유지) ---
+# --- Tab 2: 입금 내역 업로드 (최적화 양식) ---
 with tabs[1]:
-    st.header("📂 입금 내역 일괄 업로드")
-    st.info("엑셀에서 작업한 내용을 CSV로 저장하여 업로드하세요.")
+    st.header("📂 입금 내역 엑셀 업로드")
+    st.markdown("💡 **발주번호**만 정확하면 업체명, 상품명은 자동으로 매칭됩니다.")
     
-    # 양식 다운로드 (사용자 요청 컬럼 반영)
-    template = pd.DataFrame(columns=["입금일", "거래처", "유형", "통화", "상품명", "입금액", "선급금", "송금사유", "발주번호"])
-    st.download_button("📥 업로드 양식(CSV) 받기", template.to_csv(index=False).encode('utf-8-sig'), "upload_template.csv")
+    # 수정된 양식 제공
+    template = pd.DataFrame(columns=["발주번호", "입금일", "입금액", "통화", "선급금변동", "송금사유"])
+    st.download_button("📥 입금 업로드 양식(CSV) 다운로드", template.to_csv(index=False).encode('utf-8-sig'), "pay_template.csv")
     
     up_file = st.file_uploader("파일 선택", type=['csv'])
     if up_file:
         df_up = pd.read_csv(up_file)
-        if st.button("✅ 입금 내역 동기화"):
+        if st.button("✅ 입금 내역 저장/동기화"):
             for _, r in df_up.iterrows():
-                # 외화 환산 로직 (임시 1350/190 적용)
-                rate = 1350.0 if r['통화'] == "USD" else (190.0 if r['통화'] == "CNY" else 1.0)
-                conn.cursor().execute('''INSERT INTO payments (order_id, pay_date, category, vendor, product, currency, deposit, advance, note, krw_val) 
-                                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
-                                    (r['발주번호'], r['입금일'], r['유형'], r['거래처'], r['상품명'], r['통화'], r['입금액'], r['선급금'], r['송금사유'], float(r['입금액']) * rate))
+                rate = get_exchange_rate(r['통화'])
+                conn.cursor().execute('''INSERT INTO payments (order_id, pay_date, deposit, advance, note, krw_val) 
+                                       VALUES (?, ?, ?, ?, ?, ?)''',
+                                    (r['발주번호'], r['입금일'], r['입금액'], r['선급금변동'], r['송금사유'], float(r['입금액']) * rate))
             conn.commit()
-            st.success(f"{len(df_up)}건의 내역이 안전하게 저장되었습니다.")
+            st.success(f"총 {len(df_up)}건의 입금 내역이 저장되었습니다.")
 
-# --- Tab 3: 상세 내역 관리 (필터 및 마감) ---
+# --- Tab 3: 상세 정산 관리 (엑셀 대장 스타일) ---
 with tabs[2]:
-    st.header("🔍 상세 내역 조회 및 수정")
-    p_data = load_df("payments")
-    o_data = load_df("orders")
+    st.header("🔍 상세 정산 관리 (진행/마감 분리)")
     
-    if not p_data.empty:
-        # 필터 구역
-        f1, f2, f3 = st.columns(3)
-        sel_vendor = f1.multiselect("거래처", p_data['vendor'].unique())
-        sel_cat = f2.multiselect("유형", CATEGORIES)
-        sel_status = f3.radio("마감 상태", ["진행 중", "마감 건"], horizontal=True)
+    # 데이터 로드 및 병합
+    o_df = pd.read_sql("SELECT * FROM orders", conn)
+    p_df = pd.read_sql("SELECT * FROM payments", conn)
+    
+    if not o_df.empty:
+        # 발주번호별 입금 합계 계산
+        p_sum = p_df.groupby('order_id').agg({'deposit': 'sum', 'advance': 'sum'}).reset_index()
+        main_df = o_df.merge(p_sum, on='order_id', how='left').fillna(0)
+        main_df['잔금'] = main_df['total_amt'] - main_df['deposit']
         
-        # 데이터 병합 및 필터링
-        df_merged = p_data.merge(o_data[['order_id', 'is_closed']], on='order_id', how='left').fillna(0)
+        # 상태 필터
+        view_status = st.radio("보기 설정", ["진행 중인 발주", "마감된 발주"], horizontal=True)
+        is_closed_val = 1 if view_status == "마감된 발주" else 0
         
-        target_val = 1 if sel_status == "마감 건" else 0
-        df_final = df_merged[df_merged['is_closed'] == target_val]
-        if sel_vendor: df_final = df_final[df_final['vendor'].isin(sel_vendor)]
-        if sel_cat: df_final = df_final[df_final['category'].isin(sel_cat)]
+        disp_df = main_df[main_df['is_closed'] == is_closed_val]
         
-        # 가시화 및 수정 (마감 건은 회색 음영 느낌으로 제공)
-        st.subheader(f"📋 {sel_status} 목록")
-        st.data_editor(df_final, use_container_width=True, key="editor_v10")
+        # 가시화
+        st.subheader(f"📋 {view_status} 목록")
+        # 컬럼 순서 재배치 (사용자 편의)
+        col_order = ['order_id', 'order_date', 'vendor', 'category', 'product', 'currency', 'total_amt', 'deposit', '잔금', 'advance']
+        st.data_editor(disp_df[col_order], use_container_width=True, key="main_editor")
         
-        # 마감 처리 버튼
-        if sel_status == "진행 중":
-            to_close = st.selectbox("마감할 발주번호", df_final['order_id'].unique())
-            if st.button("🚩 해당 발주 전체 마감"):
+        # 마감 기능
+        if is_closed_val == 0:
+            to_close = st.selectbox("마감 처리할 발주번호", disp_df['order_id'].unique())
+            if st.button("🚩 선택한 발주 마감 (회색 처리)"):
                 conn.cursor().execute("UPDATE orders SET is_closed = 1 WHERE order_id = ?", (to_close,))
                 conn.commit()
                 st.rerun()
+    else:
+        st.info("먼저 '발주서 등록' 탭에서 정보를 입력해주세요.")
 
-# --- Tab 4: 보고용 대시보드 (대표님 보고용) ---
+# --- Tab 4: 보고 대시보드 ---
 with tabs[3]:
-    st.header("📊 지출 및 정산 요약 보고")
-    p_all = load_df("payments")
-    if not p_all.empty:
-        c1, c2 = st.columns(2)
-        # 1. 유형별 지출
-        fig1 = px.pie(p_all, values='krw_val', names='category', title="업무 유형별 지출 비중")
-        c1.plotly_chart(fig1)
-        
-        # 2. 거래처별 미결제 (발주총액 대비)
-        o_all = load_df("orders")
-        pay_sum = p_all.groupby('order_id')['deposit'].sum().reset_index()
-        report_df = o_all.merge(pay_sum, on='order_id', how='left').fillna(0)
-        report_df['미결제잔액'] = report_df['total_amt'] - report_df['deposit']
-        
-        fig2 = px.bar(report_df[report_df['is_closed']==0], x='vendor', y='미결제잔액', color='category', title="거래처별 남은 잔금(진행중)")
-        c2.plotly_chart(fig2)
-        
-        st.divider()
-        st.subheader("📝 업체별 상세 정산표")
-        st.table(report_df[['vendor', 'product', 'category', 'total_amt', 'deposit', '미결제잔액']])
+    st.header("📊 지출 현황 요약")
+    if not p_df.empty:
+        # 한화 환산액 기준 차트
+        fig = px.pie(p_df, values='krw_val', names='order_id', title="발주번호별 집행 비중")
+        st.plotly_chart(fig, use_container_width=True)
