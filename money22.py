@@ -273,7 +273,7 @@ with tabs[2]:
             mp, mt = st.text_input("상품명"), st.number_input("금액", format="%.2f")
             m_cur = st.selectbox("통화", ["한화", "USD", "CNY"])
             if st.form_submit_button("저장"):
-                # [디테일] 중복 발주번호 방지
+                # 중복 발주번호 체크
                 existing_oid = pd.read_sql(f"SELECT 발주번호 FROM orders WHERE 발주번호='{mi}'", conn)
                 if not mi:
                     st.error("발주번호를 입력하세요.")
@@ -315,7 +315,6 @@ with tabs[3]:
         f1, f2, f3, f4 = st.columns([1, 1, 1, 2])
         y = f1.selectbox("기준 연도", sorted(p_all['dt'].dt.year.unique(), reverse=True))
         m = f2.selectbox("기준 월", ["전체"] + sorted(list(p_all[p_all['dt'].dt.year==y]['dt'].dt.month.unique())))
-        # [디테일] 유형 필터 추가
         cat_filter = f3.selectbox("유형 선택", ["전체 유형"] + CATEGORIES)
         search_col, step_col = f4.columns([2, 1])
         search, search_step = search_col.text_input("업체/상품 검색"), step_col.text_input("차수 검색")
@@ -345,15 +344,15 @@ with tabs[3]:
                     rate = 1350.0 if row['통화'] == 'USD' else 190.0
             return row['실입금액'] * rate
 
+        # [수정] 요약 표 명칭 정리 (실입금액, 선급금액만 노출)
         if not fil_p.empty:
             cat_sum = fil_p.groupby('유형').agg({'실입금액':'sum', '선급금액':'sum'}).reset_index()
-            cat_sum['실송계'] = cat_sum['실입금액']
-            st.write(f"#### {y}년 {m if m != '전체' else ''} 요약")
-            st.table(cat_sum.style.format({'실입금액': '{:,.2f}', '선급금액': '{:,.2f}', '실송계': '{:,.2f}'}))
+            st.write(f"#### {y}년 {m if m != '전체' else ''} 유형별 요약")
+            st.table(cat_sum.style.format({'실입금액': '{:,.2f}', '선급금액': '{:,.2f}'}))
         
         st.divider()
         st.subheader("발주번호별 정산 및 미수금 현황")
-        # [디테일] 정산 현황 선급금 복구 및 발주번호 없는 건 제외
+        # 발주번호 정산 (실입금액, 선급금액, 잔액 위주)
         p_agg = p_all[p_all['발주번호'].notnull() & (p_all['발주번호'] != "")].groupby('발주번호').agg({'실입금액':'sum', '선급금액':'sum'}).reset_index()
         sum_df = pd.merge(o_all, p_agg, on='발주번호', how='left')
         sum_df['발주총액'] = sum_df['발주총액'].fillna(0)
@@ -363,13 +362,15 @@ with tabs[3]:
         sum_df['잔액'] = sum_df['발주총액'] - sum_df['실입금액']
         sum_df['상태'] = sum_df['마감여부'].apply(lambda x: "✅ 마감완료" if x == 1 else "⏳ 진행중")
         sum_df = sum_df.sort_values(['마감여부', '발주번호'], ascending=[True, False])
+        
+        # [수정] 칼럼 재구분 (실입금액, 선급금액, 잔액)
         disp_sum = sum_df[['발주번호', '발주차수', '상태', '거래처명', '상품명', '발주총액', '실입금액', '선급금액', '잔액', '통화']]
         
-        # [디테일] 미수금 잔액 빨간색 강조 스타일링
         def style_sum(row):
             styles = [''] * len(row)
             if row['상태'] == '✅ 마감완료':
                 styles = ['background-color: #f0f2f6; color: #a0aab2'] * len(row)
+            # 잔액이 0보다 크면 빨간색 강조
             if row['잔액'] > 0 and row['상태'] != '✅ 마감완료':
                 styles[disp_sum.columns.get_loc('잔액')] = 'color: red; font-weight: bold'
             return styles
@@ -384,7 +385,6 @@ with tabs[3]:
         else: 
             fil_p_m['예상환산액(KRW)'] = fil_p_m.apply(calc_krw, axis=1)
 
-        # [순서 변경] 유형/발주번호/발주차수/거래처명/상품명/통화/발주총액/실입금액/선급금액/환산액/입금일/메모
         final_cols = ['id', '유형', '발주번호', '발주차수', '거래처명', '상품명', '통화', '발주총액', '실입금액', '선급금액', '예상환산액(KRW)', '입금일', '메모']
         fil_p_m = fil_p_m[[c for c in final_cols if c in fil_p_m.columns]]
         
@@ -453,11 +453,11 @@ with tabs[5]:
     st.header("환율 정밀 분석")
     cu1, cu2 = st.columns(2)
     with cu1:
-        f_usd = st.file_uploader("USD/KRW CSV", type=['csv'], key="u")
+        f_usd = st.file_uploader("USD/KRW", type=['csv'], key="u")
         if f_usd and st.button("USD 업데이트"): 
             if process_exchange_csv(f_usd, "USD"): st.rerun()
     with cu2:
-        f_cny = st.file_uploader("CNY/KRW CSV", type=['csv'], key="c")
+        f_cny = st.file_uploader("CNY/KRW", type=['csv'], key="c")
         if f_cny and st.button("CNY 업데이트"):
             if process_exchange_csv(f_cny, "CNY"): st.rerun()
             
