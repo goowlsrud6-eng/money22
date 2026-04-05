@@ -182,7 +182,6 @@ with tabs[0]:
                 st.error("거래처를 선택하세요.")
             else:
                 vi = v_data[v_data['거래처명']==p_vn].iloc[0]
-                # 한화환산액은 0으로 임시 저장(조회 시 계산)
                 conn.execute('''
                     INSERT INTO payments (발주번호, 입금일, 유형, 거래처명, 상품명, 통화, 실입금액, 선급금액, 메모, 한화환산액, 은행, 계좌번호, 예금주) 
                     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
@@ -305,14 +304,16 @@ with tabs[3]:
     if not p_all.empty:
         p_all['dt'] = pd.to_datetime(p_all['입금일'])
         st.subheader("필터 및 검색")
-        f1, f2, f3 = st.columns([1, 1, 2])
+        f1, f2, f3, f4 = st.columns([1, 1, 1, 2])
         y = f1.selectbox("기준 연도", sorted(p_all['dt'].dt.year.unique(), reverse=True))
         m = f2.selectbox("기준 월", ["전체"] + sorted(list(p_all[p_all['dt'].dt.year==y]['dt'].dt.month.unique())))
-        sc_col, st_col = f3.columns([2, 1])
-        search, search_step = sc_col.text_input("업체/상품 검색"), st_col.text_input("차수 검색")
+        cat_filter = f3.selectbox("유형 선택", ["전체 유형"] + CATEGORIES)
+        search_col, step_col = f4.columns([2, 1])
+        search, search_step = search_col.text_input("업체/상품 검색"), step_col.text_input("차수 검색")
         
         fil_p = p_all[p_all['dt'].dt.year == y].copy()
         if m != "전체": fil_p = fil_p[fil_p['dt'].dt.month == m]
+        if cat_filter != "전체 유형": fil_p = fil_p[fil_p['유형'] == cat_filter]
         if search: fil_p = fil_p[fil_p['거래처명'].str.contains(search, na=False) | fil_p['상품명'].str.contains(search, na=False)]
         fil_p = pd.merge(fil_p, o_all[['발주번호', '발주차수']], on='발주번호', how='left')
         if search_step: fil_p = fil_p[fil_p['발주차수'].str.contains(search_step, na=False)]
@@ -324,45 +325,36 @@ with tabs[3]:
         def calc_krw(row):
             if row['통화'] == '한화': return row['실입금액']
             ym, curr = str(row['입금일'])[:7], row['통화'].lower()
-            
-            # 1순위: 해당 월 평균 환율
             if ym in m_rates_df.index and m_rates_df.loc[ym, curr] > 0:
                 rate = m_rates_df.loc[ym, curr]
             else:
-                # 2순위: 직전 월들 중 가장 최신 데이터 찾기
                 past_rates = m_rates_df[m_rates_df.index < ym]
                 if not past_rates.empty and past_rates[curr].sum() > 0:
                     valid_past = past_rates[past_rates[curr] > 0]
                     rate = valid_past.iloc[-1][curr]
                 else:
-                    # 3순위: 기본값
                     rate = 1350.0 if row['통화'] == 'USD' else 190.0
             return row['실입금액'] * rate
 
         if not fil_p.empty:
             cat_sum = fil_p.groupby('유형').agg({'실입금액':'sum', '선급금액':'sum'}).reset_index()
-            cat_sum['실송계'] = cat_sum['실입금액'] # 실입금액 기준 요약
-            st.write(f"#### {y}년 {m if m != '전체' else ''} 유형별 요약")
+            cat_sum['실송계'] = cat_sum['실입금액']
+            st.write(f"#### {y}년 {m if m != '전체' else ''} 요약")
             st.table(cat_sum.style.format({'실입금액': '{:,.2f}', '선급금액': '{:,.2f}', '실송계': '{:,.2f}'}))
         
         st.divider()
         st.subheader("발주번호별 정산 및 미수금 현황")
-        p_agg = p_all.groupby('발주번호', dropna=False).agg({'실입금액':'sum'}).reset_index()
-        sum_df = pd.merge(o_all, p_agg, on='발주번호', how='outer')
+        # [수정] 발주번호가 있는 건들만 정산 테이블에 표시 (미등록/None 제외)
+        p_agg = p_all[p_all['발주번호'].notnull() & (p_all['발주번호'] != "")].groupby('발주번호').agg({'실입금액':'sum'}).reset_index()
+        sum_df = pd.merge(o_all, p_agg, on='발주번호', how='left')
         sum_df['발주총액'] = sum_df['발주총액'].fillna(0)
         sum_df['실입금액'] = sum_df['실입금액'].fillna(0)
         sum_df['마감여부'] = sum_df['마감여부'].fillna(0)
-        p_l = p_all.drop_duplicates('발주번호', keep='last').set_index('발주번호')
-        sum_df = sum_df.set_index('발주번호')
-        sum_df['거래처명'] = sum_df['거래처명'].fillna(p_l['거래처명']).fillna('')
-        sum_df['상품명'] = sum_df['상품명'].fillna(p_l['상품명']).fillna('')
-        sum_df['통화'] = sum_df['통화'].fillna(p_l['통화']).fillna('한화')
-        sum_df['발주차수'] = sum_df['발주차수'].fillna('미등록')
-        sum_df = sum_df.reset_index()
         sum_df['잔액'] = sum_df['발주총액'] - sum_df['실입금액']
         sum_df['상태'] = sum_df['마감여부'].apply(lambda x: "✅ 마감완료" if x == 1 else "⏳ 진행중")
         sum_df = sum_df.sort_values(['마감여부', '발주번호'], ascending=[True, False])
         disp_sum = sum_df[['발주번호', '발주차수', '상태', '거래처명', '상품명', '발주총액', '실입금액', '잔액', '통화']]
+        
         def highlight_closed(row):
             return ['background-color: #f0f2f6; color: #a0aab2'] * len(row) if row['상태'] == '✅ 마감완료' else [''] * len(row)
         st.dataframe(disp_sum.style.apply(highlight_closed, axis=1).format({'발주총액': '{:,.2f}', '실입금액': '{:,.2f}', '잔액': '{:,.2f}'}), use_container_width=True, hide_index=True)
@@ -375,7 +367,7 @@ with tabs[3]:
         else: 
             fil_p_m['예상환산액(KRW)'] = fil_p_m.apply(calc_krw, axis=1)
 
-        # [순서 변경 적용] 유형/발주번호/발주차수/거래처명/상품명/통화/발주총액/실입금액/선급금액/환산액/입금일/메모
+        # [순서 변경] 유형/발주번호/발주차수/거래처명/상품명/통화/발주총액/실입금액/선급금액/환산액/입금일/메모
         final_cols = ['id', '유형', '발주번호', '발주차수', '거래처명', '상품명', '통화', '발주총액', '실입금액', '선급금액', '예상환산액(KRW)', '입금일', '메모']
         fil_p_m = fil_p_m[[c for c in final_cols if c in fil_p_m.columns]]
         
@@ -455,17 +447,25 @@ with tabs[5]:
         f_cny = st.file_uploader("CNY/KRW", type=['csv'], key="c")
         if f_cny and st.button("CNY 업데이트"):
             if process_exchange_csv(f_cny, "CNY"): st.rerun()
+            
     ex_db_plot = pd.read_sql("SELECT * FROM exchange_rates ORDER BY 날짜 ASC", conn)
     if not ex_db_plot.empty:
         ex_db_plot['ym'] = pd.to_datetime(ex_db_plot['날짜']).dt.strftime('%Y-%m')
         m_mean = ex_db_plot.groupby('ym').agg({'usd': lambda x: x[x>0].mean(), 'cny': lambda x: x[x>0].mean()}).reset_index().fillna(0)
         m_mean['year'], m_mean['month'] = m_mean['ym'].str[:4].astype(int), m_mean['ym'].str[5:].astype(int)
+        
         st.subheader("평균 추이"); cc1, cc2 = st.columns(2)
         with cc1:
-            fig_u = go.Figure(); fig_u.add_trace(go.Scatter(x=m_mean['ym'], y=m_mean['usd'], mode='lines+markers', name='USD')); fig_u.update_layout(yaxis=dict(range=[1300, 1600]), height=350, template="plotly_white"); st.plotly_chart(fig_u, use_container_width=True)
+            fig_u = go.Figure()
+            fig_u.add_trace(go.Scatter(x=m_mean['ym'], y=m_mean['usd'], mode='lines+markers', name='USD'))
+            fig_u.update_layout(yaxis=dict(range=[1300, 1600]), height=350, template="plotly_white")
+            st.plotly_chart(fig_u, use_container_width=True)
         with cc2:
-            fig_c = go.Figure(); fig_c.add_trace(go.Scatter(x=m_mean['ym'], y=m_mean['cny'], mode='lines+markers', name='CNY', line=dict(color='orange'))); fig_c.update_layout(yaxis=dict(range=[180, 210]), height=350, template="plotly_white"); st.plotly_chart(fig_c, use_container_width=True)
-        
+            fig_c = go.Figure()
+            fig_c.add_trace(go.Scatter(x=m_mean['ym'], y=m_mean['cny'], mode='lines+markers', name='CNY', line=dict(color='orange')))
+            fig_c.update_layout(yaxis=dict(range=[180, 210]), height=350, template="plotly_white")
+            st.plotly_chart(fig_c, use_container_width=True)
+            
         def get_report(df, col):
             ys = sorted(df['year'].unique(), reverse=True)
             if not ys: return pd.DataFrame()
@@ -479,17 +479,27 @@ with tabs[5]:
                     if pd.notnull(v1) and pd.notnull(v2) and v2 > 0: return f"{(v1-v2):+.2f}({((v1-v2)/v2*100):+.1f}%)"
                     return "-"
                 res['전년비(YoY)'] = res.apply(yoy, axis=1)
-            df_s = df.sort_values('ym').copy(); df_s['d'], df_s['p'] = df_s[col].diff(), df_s[col].shift(1)
+            df_s = df.sort_values('ym').copy()
+            df_s['d'], df_s['p'] = df_s[col].diff(), df_s[col].shift(1)
             def mom(row):
-                m = row['월']; mom_map = df_s[df_s['year'] == cy].set_index('month')
+                m = row['월']
+                mom_map = df_s[df_s['year'] == cy].set_index('month')
                 if m in mom_map.index:
                     d, v = mom_map.loc[m, 'd'], mom_map.loc[m, 'p']
                     if pd.notnull(d) and pd.notnull(v) and v > 0: return f"{d:+.2f}({(d/v*100):+.1f}%)"
                 return "-"
             res['전월비(MoM)'] = res.apply(mom, axis=1)
             return res[res[f'{cy}년'].notnull() | (res[f'{py}년'].notnull() if py else False)].reset_index(drop=True)
-        
-        st.divider(); st.subheader("연도별 병렬 리포트"); rc1, rc2 = st.columns(2)
-        with rc1: st.write("#### USD"); ur = get_report(m_mean, 'usd'); st.table(ur.style.format({'월':'{:.0f}월'}, na_rep="-"))
-        with rc2: st.write("#### CNY"); cr = get_report(m_mean, 'cny'); st.table(cr.style.format({'월':'{:.0f}월'}, na_rep="-"))
-    else: st.warning("데이터가 없습니다.")
+            
+        st.divider(); st.subheader("연도별 병렬 리포트")
+        rc1, rc2 = st.columns(2)
+        with rc1: 
+            st.write("#### USD")
+            ur = get_report(m_mean, 'usd')
+            st.table(ur.style.format({'월':'{:.0f}월'}, na_rep="-"))
+        with rc2: 
+            st.write("#### CNY")
+            cr = get_report(m_mean, 'cny')
+            st.table(cr.style.format({'월':'{:.0f}월'}, na_rep="-"))
+    else:
+        st.warning("데이터가 없습니다.")
