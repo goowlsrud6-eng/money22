@@ -273,7 +273,15 @@ with tabs[2]:
             mp, mt = st.text_input("상품명"), st.number_input("금액", format="%.2f")
             m_cur = st.selectbox("통화", ["한화", "USD", "CNY"])
             if st.form_submit_button("저장"):
-                if mi and mv != "선택":
+                # [디테일] 중복 발주번호 방지
+                existing_oid = pd.read_sql(f"SELECT 발주번호 FROM orders WHERE 발주번호='{mi}'", conn)
+                if not mi:
+                    st.error("발주번호를 입력하세요.")
+                elif not existing_oid.empty:
+                    st.error(f"이미 존재하는 발주번호입니다: {mi}")
+                elif mv == "선택":
+                    st.error("거래처를 선택하세요.")
+                else:
                     vt = pd.read_sql(f"SELECT 기본유형 FROM vendors WHERE 거래처명='{mv}'", conn).iloc[0]['기본유형']
                     conn.execute("INSERT OR REPLACE INTO orders VALUES (?,?,?,?,?,?,?,?,0)", (mi, md.strftime("%Y-%m-%d"), m_step, mv, mp, vt, m_cur, mt))
                     conn.commit()
@@ -307,6 +315,7 @@ with tabs[3]:
         f1, f2, f3, f4 = st.columns([1, 1, 1, 2])
         y = f1.selectbox("기준 연도", sorted(p_all['dt'].dt.year.unique(), reverse=True))
         m = f2.selectbox("기준 월", ["전체"] + sorted(list(p_all[p_all['dt'].dt.year==y]['dt'].dt.month.unique())))
+        # [디테일] 유형 필터 추가
         cat_filter = f3.selectbox("유형 선택", ["전체 유형"] + CATEGORIES)
         search_col, step_col = f4.columns([2, 1])
         search, search_step = search_col.text_input("업체/상품 검색"), step_col.text_input("차수 검색")
@@ -318,7 +327,7 @@ with tabs[3]:
         fil_p = pd.merge(fil_p, o_all[['발주번호', '발주차수']], on='발주번호', how='left')
         if search_step: fil_p = fil_p[fil_p['발주차수'].str.contains(search_step, na=False)]
 
-        # --- 환율 로직: 해당 월 없으면 직전 월 사용 ---
+        # --- 환율 로직: 직전 월 데이터 추적 ---
         ex_db['ym'] = pd.to_datetime(ex_db['날짜']).dt.strftime('%Y-%m')
         m_rates_df = ex_db.groupby('ym').agg({'usd': lambda x: x[x>0].mean(), 'cny': lambda x: x[x>0].mean()}).fillna(0)
         
@@ -344,20 +353,28 @@ with tabs[3]:
         
         st.divider()
         st.subheader("발주번호별 정산 및 미수금 현황")
-        # [수정] 발주번호가 있는 건들만 정산 테이블에 표시 (미등록/None 제외)
-        p_agg = p_all[p_all['발주번호'].notnull() & (p_all['발주번호'] != "")].groupby('발주번호').agg({'실입금액':'sum'}).reset_index()
+        # [디테일] 정산 현황 선급금 복구 및 발주번호 없는 건 제외
+        p_agg = p_all[p_all['발주번호'].notnull() & (p_all['발주번호'] != "")].groupby('발주번호').agg({'실입금액':'sum', '선급금액':'sum'}).reset_index()
         sum_df = pd.merge(o_all, p_agg, on='발주번호', how='left')
         sum_df['발주총액'] = sum_df['발주총액'].fillna(0)
         sum_df['실입금액'] = sum_df['실입금액'].fillna(0)
+        sum_df['선급금액'] = sum_df['선급금액'].fillna(0)
         sum_df['마감여부'] = sum_df['마감여부'].fillna(0)
         sum_df['잔액'] = sum_df['발주총액'] - sum_df['실입금액']
         sum_df['상태'] = sum_df['마감여부'].apply(lambda x: "✅ 마감완료" if x == 1 else "⏳ 진행중")
         sum_df = sum_df.sort_values(['마감여부', '발주번호'], ascending=[True, False])
-        disp_sum = sum_df[['발주번호', '발주차수', '상태', '거래처명', '상품명', '발주총액', '실입금액', '잔액', '통화']]
+        disp_sum = sum_df[['발주번호', '발주차수', '상태', '거래처명', '상품명', '발주총액', '실입금액', '선급금액', '잔액', '통화']]
         
-        def highlight_closed(row):
-            return ['background-color: #f0f2f6; color: #a0aab2'] * len(row) if row['상태'] == '✅ 마감완료' else [''] * len(row)
-        st.dataframe(disp_sum.style.apply(highlight_closed, axis=1).format({'발주총액': '{:,.2f}', '실입금액': '{:,.2f}', '잔액': '{:,.2f}'}), use_container_width=True, hide_index=True)
+        # [디테일] 미수금 잔액 빨간색 강조 스타일링
+        def style_sum(row):
+            styles = [''] * len(row)
+            if row['상태'] == '✅ 마감완료':
+                styles = ['background-color: #f0f2f6; color: #a0aab2'] * len(row)
+            if row['잔액'] > 0 and row['상태'] != '✅ 마감완료':
+                styles[disp_sum.columns.get_loc('잔액')] = 'color: red; font-weight: bold'
+            return styles
+
+        st.dataframe(disp_sum.style.apply(style_sum, axis=1).format({'발주총액': '{:,.2f}', '실입금액': '{:,.2f}', '선급금액': '{:,.2f}', '잔액': '{:,.2f}'}), use_container_width=True, hide_index=True)
 
         st.divider()
         st.subheader("상세 리스트 편집 및 삭제")
@@ -412,13 +429,9 @@ with tabs[4]:
                 if vn: conn.execute("INSERT OR REPLACE INTO vendors VALUES (?,?,?,?,?)", (vn,vb,va,vh,vt)); conn.commit(); st.rerun()
     with v2:
         st.subheader("일괄 업로드")
-        v_tmp = pd.DataFrame(columns=["거래처명", "은행", "계좌번호", "예금주", "기본유형"])
-        st.download_button(label="양식 다운로드", data=v_tmp.to_csv(index=False).encode('utf-8-sig'), file_name='vendor_template.csv')
         vf = st.file_uploader("거래처 CSV", type=['csv'])
         if vf and st.button("업로드"):
-            v_up = pd.read_csv(vf)
-            for _, r in v_up.iterrows():
-                conn.execute("INSERT OR REPLACE INTO vendors VALUES (?,?,?,?,?)", (r['거래처명'], r['은행'], r['계좌번호'], r['예금주'], r['기본유형']))
+            v_up = pd.read_csv(vf); [conn.execute("INSERT OR REPLACE INTO vendors VALUES (?,?,?,?,?)", (r['거래처명'], r['은행'], r['계좌번호'], r['예금주'], r['기본유형'])) for _, r in v_up.iterrows()]
             conn.commit(); st.rerun()
     st.divider()
     v_data = pd.read_sql("SELECT * FROM vendors", conn)
@@ -440,11 +453,11 @@ with tabs[5]:
     st.header("환율 정밀 분석")
     cu1, cu2 = st.columns(2)
     with cu1:
-        f_usd = st.file_uploader("USD/KRW", type=['csv'], key="u")
+        f_usd = st.file_uploader("USD/KRW CSV", type=['csv'], key="u")
         if f_usd and st.button("USD 업데이트"): 
             if process_exchange_csv(f_usd, "USD"): st.rerun()
     with cu2:
-        f_cny = st.file_uploader("CNY/KRW", type=['csv'], key="c")
+        f_cny = st.file_uploader("CNY/KRW CSV", type=['csv'], key="c")
         if f_cny and st.button("CNY 업데이트"):
             if process_exchange_csv(f_cny, "CNY"): st.rerun()
             
