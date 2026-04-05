@@ -14,7 +14,7 @@ import urllib.request
 def run_backup():
     if not os.path.exists('backups'):
         os.makedirs('backups')
-    db_file = 'finance_final_v128.db'
+    db_file = 'finance_final_v129.db'
     today_str = datetime.now().strftime('%Y%m%d')
     backup_file = f"backups/backup_{today_str}.db"
     
@@ -26,7 +26,7 @@ run_backup()
 
 @st.cache_resource
 def get_db_connection():
-    conn = sqlite3.connect('finance_final_v128.db', check_same_thread=False)
+    conn = sqlite3.connect('finance_final_v129.db', check_same_thread=False)
     c = conn.cursor()
     c.execute('CREATE TABLE IF NOT EXISTS vendors (거래처명 TEXT PRIMARY KEY, 은행 TEXT, 계좌번호 TEXT, 예금주 TEXT, 기본유형 TEXT)')
     c.execute('''CREATE TABLE IF NOT EXISTS orders 
@@ -115,7 +115,7 @@ def process_exchange_csv(file, currency_type):
         st.error(f"환율 분석 오류: {e}")
         return False
 
-def process_ecount_v128(file):
+def process_ecount_v129(file):
     try:
         df = pd.read_excel(file, header=None)
         raw_oid = str(df.iloc[1, 0]).split(":")[-1].strip() if ":" in str(df.iloc[1,0]) else str(df.iloc[1, 0])
@@ -168,7 +168,7 @@ with tabs[0]:
     v_data = pd.read_sql("SELECT * FROM vendors", conn)
     o_active = pd.read_sql("SELECT 발주번호 FROM orders WHERE 마감여부=0", conn)
     
-    with st.form("pay_manual_v128", clear_on_submit=True):
+    with st.form("pay_manual_v129", clear_on_submit=True):
         c1, c2 = st.columns(2)
         p_oid = c1.selectbox("발주번호 연동", ["없음"] + list(o_active['발주번호']))
         p_date = c2.date_input("입금일", value=datetime.now())
@@ -213,7 +213,6 @@ with tabs[1]:
     if f_p and st.button("데이터 일괄 저장"):
         try:
             df_p = pd.read_csv(f_p)
-            # 날짜 버그 해결 (BOM 및 공백 제거)
             df_p.columns = [str(c).strip().replace('\ufeff', '') for c in df_p.columns]
             
             v_l = pd.read_sql("SELECT * FROM vendors", conn)
@@ -226,7 +225,6 @@ with tabs[1]:
                 if not vn_raw and not oid: 
                     continue
                 
-                # 파일에 입금일이 없으면 오늘 날짜 적용
                 pd_s = smart_date(r.get('입금일'))
                 
                 if oid and not o_l[o_l['발주번호'] == oid].empty:
@@ -280,7 +278,7 @@ with tabs[2]:
             error_messages = []
             
             for of in of_list:
-                ok, msg = process_ecount_v128(of)
+                ok, msg = process_ecount_v129(of)
                 if ok: 
                     success_cnt += 1
                 else: 
@@ -298,7 +296,7 @@ with tabs[2]:
     with c_o2:
         st.subheader("수기 발주 등록")
         v_list = pd.read_sql("SELECT 거래처명 FROM vendors", conn)
-        with st.form("ord_manual_v128"):
+        with st.form("ord_manual_v129"):
             mi = st.text_input("발주번호")
             m_step = st.text_input("발주차수")
             md = st.date_input("발주일")
@@ -339,7 +337,7 @@ with tabs[2]:
             st.rerun()
 
 # ------------------------------------------
-# [Tab 3] 상세내역 및 통합 정산
+# [Tab 3] 상세내역 및 통합 정산 (★★ KeyError 및 Outer Merge 완벽 복구 ★★)
 # ------------------------------------------
 with tabs[3]:
     st.header("상세 내역 및 통합 정산")
@@ -364,7 +362,6 @@ with tabs[3]:
         if search: 
             fil_p = fil_p[fil_p['거래처명'].str.contains(search, na=False) | fil_p['상품명'].str.contains(search, na=False)]
         
-        # 발주 데이터와 병합하여 발주차수 필터링 적용
         fil_p = pd.merge(fil_p, o_all[['발주번호', '발주차수']], on='발주번호', how='left')
         if search_step: 
             fil_p = fil_p[fil_p['발주차수'].str.contains(search_step, na=False)]
@@ -377,15 +374,35 @@ with tabs[3]:
         
         st.divider()
         st.subheader("발주번호별 정산 및 미수금 현황")
-        p_agg = p_all.groupby('발주번호').agg({'실입금액':'sum'}).reset_index()
-        sum_df = pd.merge(o_all, p_agg, on='발주번호', how='left').fillna(0)
-        sum_df['잔액'] = sum_df['발주총액'] - sum_df['실입금액']
         
-        # 마감 상태 생성
+        # ★ Outer Merge 복구: 발주가 등록되지 않은 입금 엑셀도 표에 표시되도록 outer 조인 사용
+        p_agg = p_all.groupby('발주번호').agg({'실입금액':'sum'}).reset_index()
+        sum_df = pd.merge(o_all, p_agg, on='발주번호', how='outer')
+        
+        # Outer 조인 시 발생하는 NaN 값들을 안전하게 채움
+        sum_df['발주총액'] = sum_df['발주총액'].fillna(0)
+        sum_df['실입금액'] = sum_df['실입금액'].fillna(0)
+        sum_df['마감여부'] = sum_df['마감여부'].fillna(0)
+        
+        # 발주서가 없어서 빈 문자열이 되는 컬럼을 입금 내역(p_all)에서 끌어와서 채워줌
+        p_latest = p_all.drop_duplicates('발주번호', keep='last').set_index('발주번호')
+        sum_df = sum_df.set_index('발주번호')
+        
+        sum_df['거래처명'] = sum_df['거래처명'].fillna(p_latest['거래처명']).fillna('')
+        sum_df['상품명'] = sum_df['상품명'].fillna(p_latest['상품명']).fillna('')
+        sum_df['통화'] = sum_df['통화'].fillna(p_latest['통화']).fillna('한화')
+        sum_df['발주차수'] = sum_df['발주차수'].fillna('미등록')
+        
+        sum_df = sum_df.reset_index()
+        
+        sum_df['잔액'] = sum_df['발주총액'] - sum_df['실입금액']
         sum_df['상태'] = sum_df['마감여부'].apply(lambda x: "마감완료" if x == 1 else "진행중")
         
-        # 마감여부에 따라 하단 정렬 (0: 진행중 우선, 1: 마감완료 하단)
-        disp_sum = sum_df[['발주번호', '발주차수', '상태', '거래처명', '상품명', '발주총액', '실입금액', '잔액', '통화']].sort_values(['마감여부', '발주번호'], ascending=[True, False])
+        # ★ KeyError 완벽 해결: 컬럼을 빼기 '전에' 먼저 정렬 수행!
+        sum_df = sum_df.sort_values(['마감여부', '발주번호'], ascending=[True, False])
+        
+        # 정렬이 완료된 후 화면에 보여줄 컬럼만 선택
+        disp_sum = sum_df[['발주번호', '발주차수', '상태', '거래처명', '상품명', '발주총액', '실입금액', '잔액', '통화']]
         
         def highlight_closed(row):
             if row['상태'] == '마감완료':
@@ -397,7 +414,6 @@ with tabs[3]:
         st.divider()
         st.subheader("상세 리스트 편집 및 삭제")
         
-        # 실시간/평균 환율 로직
         ex_db = pd.read_sql("SELECT * FROM exchange_rates", conn)
         ex_db['ym'] = pd.to_datetime(ex_db['날짜']).dt.strftime('%Y-%m')
         m_rates = ex_db.groupby('ym').agg({'usd': lambda x: x[x>0].mean(), 'cny': lambda x: x[x>0].mean()}).to_dict('index')
@@ -413,18 +429,14 @@ with tabs[3]:
                 rate = get_realtime_rate(row['통화'])
             return (row['실입금액'] + row['선급금액']) * rate
 
-        # 상세 리스트 가공을 위한 병합 (기존에 발주차수는 병합했으므로 제거 후 다시 전체 병합)
-        fil_p_merged = pd.merge(fil_p.drop(columns=['발주차수']), o_all[['발주번호', '발주차수', '발주총액']], on='발주번호', how='left')
+        fil_p_merged = pd.merge(fil_p.drop(columns=['발주차수'], errors='ignore'), o_all[['발주번호', '발주차수', '발주총액']], on='발주번호', how='left')
         
         if fil_p_merged.empty: 
             fil_p_merged['예상환산액(KRW)'] = pd.Series(dtype=float)
         else: 
             fil_p_merged['예상환산액(KRW)'] = fil_p_merged.apply(calc_krw_estimate, axis=1)
         
-        # 표시할 컬럼을 명시적으로 정리
         final_cols = ['id', '발주번호', '발주차수', '발주총액', '실입금액', '선급금액', '예상환산액(KRW)', '입금일', '유형', '거래처명', '상품명', '통화', '메모']
-        
-        # 데이터프레임에 존재하는 컬럼만 선택
         fil_p_merged = fil_p_merged[[c for c in final_cols if c in fil_p_merged.columns]]
         
         ed_p = st.data_editor(fil_p_merged.sort_values('입금일', ascending=False), hide_index=True, use_container_width=True, 
@@ -441,7 +453,7 @@ with tabs[3]:
                 st.success("저장 완료!")
                 st.rerun()
         with eb2:
-            with st.form("delete_v128", clear_on_submit=True):
+            with st.form("delete_v129", clear_on_submit=True):
                 col_d1, col_d2 = st.columns([2, 1])
                 del_id = col_d1.number_input("삭제 ID", min_value=0, step=1)
                 if col_d2.form_submit_button("해당 ID 삭제"):
@@ -475,7 +487,7 @@ with tabs[4]:
     cv1, cv2 = st.columns([1.2, 0.8])
     with cv1:
         st.subheader("신규 등록")
-        with st.form("vn_v128", clear_on_submit=True):
+        with st.form("vn_v129", clear_on_submit=True):
             vn = st.text_input("거래처명")
             vt = st.selectbox("유형", CATEGORIES)
             vc1, vc2, vc3 = st.columns(3)
@@ -603,7 +615,6 @@ with tabs[5]:
                 
             res['전월비(MoM)'] = res.apply(calc_mom, axis=1)
             
-            # 과거 연도나 현재 연도 둘 중 하나라도 데이터가 있는 행만 반환
             return res[res[f'{cy}년 평균'].notnull() | (res[f'{py}년 평균'].notnull() if py else False)].reset_index(drop=True)
 
         st.divider()
