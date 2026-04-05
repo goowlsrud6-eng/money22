@@ -73,7 +73,7 @@ def to_str(val):
     return "" if s.lower() in ["nan", "none", ""] else s
 
 def smart_date(date_val):
-    """엑셀/문자열 날짜 판별 및 변환"""
+    """엑셀의 날짜 형식과 문자열을 판별하여 변환"""
     try:
         if pd.isna(date_val) or str(date_val).strip() == "":
             return datetime.now().strftime("%Y-%m-%d")
@@ -84,20 +84,6 @@ def smart_date(date_val):
         return pd.to_datetime(ds).strftime("%Y-%m-%d")
     except:
         return datetime.now().strftime("%Y-%m-%d")
-
-@st.cache_data(ttl=3600)
-def get_realtime_rate(currency):
-    """네이버 환율 크롤러"""
-    try:
-        url = f"https://finance.naver.com/marketindex/exchangeDetail.naver?marketindexCd=FX_{currency}KRW"
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        html = urllib.request.urlopen(req).read().decode('euc-kr', errors='ignore')
-        match = re.search(r'<meta property="og:description" content=".*?\s+([\d,.]+)\s+전일대비', html)
-        if match: 
-            return float(match.group(1).replace(',', ''))
-    except: 
-        pass
-    return 1350.0 if currency == 'USD' else (190.0 if currency == 'CNY' else 1.0)
 
 # ==========================================
 # 3. 데이터 처리 엔진
@@ -162,11 +148,13 @@ def process_ecount_v136(file):
         return False, "분석 오류: " + str(e)
 
 # ==========================================
-# 4. 메인 UI
+# 4. 메인 UI (탭 구성 및 상세 로직)
 # ==========================================
 tabs = st.tabs(["입금 입력", "입금 엑셀 업로드", "발주서 등록", "상세내역 및 정산", "거래처 관리", "환율 관리"])
 
+# ------------------------------------------
 # [Tab 0] 입금 수기 입력
+# ------------------------------------------
 with tabs[0]:
     st.header("입금 내역 수기 입력")
     v_data = pd.read_sql("SELECT * FROM vendors", conn)
@@ -193,19 +181,20 @@ with tabs[0]:
             if p_vn == "선택":
                 st.error("거래처를 선택하세요.")
             else:
-                rate = 1350.0 if p_cur == "USD" else (190.0 if p_cur == "CNY" else 1.0)
                 vi = v_data[v_data['거래처명']==p_vn].iloc[0]
-                
+                # 한화환산액은 0으로 임시 저장(조회 시 계산)
                 conn.execute('''
                     INSERT INTO payments (발주번호, 입금일, 유형, 거래처명, 상품명, 통화, 실입금액, 선급금액, 메모, 한화환산액, 은행, 계좌번호, 예금주) 
                     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
-                ''', (to_str(p_oid) if p_oid != "없음" else None, p_date.strftime("%Y-%m-%d"), p_ct, p_vn, p_pr, p_cur, p_dep, p_pre, p_memo, p_dep*rate, vi['은행'], vi['계좌번호'], vi['예금주']))
+                ''', (to_str(p_oid) if p_oid != "없음" else None, p_date.strftime("%Y-%m-%d"), p_ct, p_vn, p_pr, p_cur, p_dep, p_pre, p_memo, 0.0, vi['은행'], vi['계좌번호'], vi['예금주']))
                 
                 conn.commit()
                 st.success("저장 완료!")
                 st.rerun()
 
+# ------------------------------------------
 # [Tab 1] 입금 엑셀 업로드
+# ------------------------------------------
 with tabs[1]:
     st.header("통합 입금 엑셀 업로드")
     pay_tmp = pd.DataFrame(columns=["발주번호", "거래처", "유형", "상품명", "입금일", "실입금액", "선급금액", "송금사유"])
@@ -216,6 +205,7 @@ with tabs[1]:
         try:
             df_p = pd.read_csv(f_p)
             df_p.columns = [str(c).strip().replace('\ufeff', '') for c in df_p.columns]
+            
             v_l = pd.read_sql("SELECT * FROM vendors", conn)
             o_l = pd.read_sql("SELECT * FROM orders", conn)
             
@@ -235,7 +225,6 @@ with tabs[1]:
                     
                 vi = v_l[v_l['거래처명'] == vn] if vn else pd.DataFrame()
                 dep, pre = to_float(r.get('실입금액')), to_float(r.get('선급금액'))
-                rt = 1350.0 if cur == "USD" else (190.0 if cur == "CNY" else 1.0)
                 
                 b_bank = vi.iloc[0]['은행'] if not vi.empty else ""
                 b_acc = vi.iloc[0]['계좌번호'] if not vi.empty else ""
@@ -244,7 +233,7 @@ with tabs[1]:
                 conn.execute('''
                     INSERT INTO payments (발주번호, 입금일, 유형, 거래처명, 상품명, 통화, 실입금액, 선급금액, 메모, 한화환산액, 은행, 계좌번호, 예금주) 
                     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
-                ''', (oid if oid else None, pd_s, pc, vn, pp, cur, dep, pre, to_str(r.get('송금사유')), dep*rt, b_bank, b_acc, b_hold))
+                ''', (oid if oid else None, pd_s, pc, vn, pp, cur, dep, pre, to_str(r.get('송금사유')), 0.0, b_bank, b_acc, b_hold))
                 success_cnt += 1
                 
             conn.commit()
@@ -254,7 +243,9 @@ with tabs[1]:
         except Exception as e: 
             st.error(f"오류: {e}")
 
+# ------------------------------------------
 # [Tab 2] 발주서 등록 및 마감
+# ------------------------------------------
 with tabs[2]:
     st.header("발주서 등록 및 마감")
     c1, c2 = st.columns(2)
@@ -302,11 +293,14 @@ with tabs[2]:
             conn.commit()
             st.rerun()
 
+# ------------------------------------------
 # [Tab 3] 상세내역 및 통합 정산
+# ------------------------------------------
 with tabs[3]:
     st.header("상세 내역 및 통합 정산")
     p_all = pd.read_sql("SELECT * FROM payments", conn)
     o_all = pd.read_sql("SELECT * FROM orders", conn)
+    ex_db = pd.read_sql("SELECT * FROM exchange_rates ORDER BY 날짜 ASC", conn)
     
     if not p_all.empty:
         p_all['dt'] = pd.to_datetime(p_all['입금일'])
@@ -323,11 +317,33 @@ with tabs[3]:
         fil_p = pd.merge(fil_p, o_all[['발주번호', '발주차수']], on='발주번호', how='left')
         if search_step: fil_p = fil_p[fil_p['발주차수'].str.contains(search_step, na=False)]
 
+        # --- 환율 로직: 해당 월 없으면 직전 월 사용 ---
+        ex_db['ym'] = pd.to_datetime(ex_db['날짜']).dt.strftime('%Y-%m')
+        m_rates_df = ex_db.groupby('ym').agg({'usd': lambda x: x[x>0].mean(), 'cny': lambda x: x[x>0].mean()}).fillna(0)
+        
+        def calc_krw(row):
+            if row['통화'] == '한화': return row['실입금액']
+            ym, curr = str(row['입금일'])[:7], row['통화'].lower()
+            
+            # 1순위: 해당 월 평균 환율
+            if ym in m_rates_df.index and m_rates_df.loc[ym, curr] > 0:
+                rate = m_rates_df.loc[ym, curr]
+            else:
+                # 2순위: 직전 월들 중 가장 최신 데이터 찾기
+                past_rates = m_rates_df[m_rates_df.index < ym]
+                if not past_rates.empty and past_rates[curr].sum() > 0:
+                    valid_past = past_rates[past_rates[curr] > 0]
+                    rate = valid_past.iloc[-1][curr]
+                else:
+                    # 3순위: 기본값
+                    rate = 1350.0 if row['통화'] == 'USD' else 190.0
+            return row['실입금액'] * rate
+
         if not fil_p.empty:
             cat_sum = fil_p.groupby('유형').agg({'실입금액':'sum', '선급금액':'sum'}).reset_index()
-            cat_sum['실송금총계'] = cat_sum['실입금액']
+            cat_sum['실송계'] = cat_sum['실입금액'] # 실입금액 기준 요약
             st.write(f"#### {y}년 {m if m != '전체' else ''} 유형별 요약")
-            st.table(cat_sum.style.format({'실입금액': '{:,.2f}', '선급금액': '{:,.2f}', '실송금총계': '{:,.2f}'}))
+            st.table(cat_sum.style.format({'실입금액': '{:,.2f}', '선급금액': '{:,.2f}', '실송계': '{:,.2f}'}))
         
         st.divider()
         st.subheader("발주번호별 정산 및 미수금 현황")
@@ -353,24 +369,13 @@ with tabs[3]:
 
         st.divider()
         st.subheader("상세 리스트 편집 및 삭제")
-        ex_db = pd.read_sql("SELECT * FROM exchange_rates", conn)
-        ex_db['ym'] = pd.to_datetime(ex_db['날짜']).dt.strftime('%Y-%m')
-        m_rates = ex_db.groupby('ym').agg({'usd': lambda x: x[x>0].mean() if not x[x>0].empty else 0.0, 'cny': lambda x: x[x>0].mean() if not x[x>0].empty else 0.0}).to_dict('index')
-        
-        # [수정 로직] 실입금액에 대해서만 환율 적용
-        def calc_krw(row):
-            if row['통화'] == '한화': return row['실입금액']
-            ym, curr = str(row['입금일'])[:7], row['통화'].lower()
-            rate = m_rates[ym][curr] if ym in m_rates and m_rates[ym][curr] > 0 else get_realtime_rate(row['통화'])
-            return row['실입금액'] * rate
-
         fil_p_m = pd.merge(fil_p.drop(columns=['발주차수'], errors='ignore'), o_all[['발주번호', '발주차수', '발주총액']], on='발주번호', how='left')
         if fil_p_m.empty: 
             fil_p_m['예상환산액(KRW)'] = pd.Series(dtype=float)
         else: 
             fil_p_m['예상환산액(KRW)'] = fil_p_m.apply(calc_krw, axis=1)
 
-        # [순서 변경] 유형/발주번호/발주차수/거래처명/상품명/통화/발주총액/실입금액/선급금액/메모 순서
+        # [순서 변경 적용] 유형/발주번호/발주차수/거래처명/상품명/통화/발주총액/실입금액/선급금액/환산액/입금일/메모
         final_cols = ['id', '유형', '발주번호', '발주차수', '거래처명', '상품명', '통화', '발주총액', '실입금액', '선급금액', '예상환산액(KRW)', '입금일', '메모']
         fil_p_m = fil_p_m[[c for c in final_cols if c in fil_p_m.columns]]
         
@@ -384,9 +389,8 @@ with tabs[3]:
                 conn.commit(); st.rerun()
         with b2:
             with st.form("del_v136", clear_on_submit=True):
-                col_d1, col_d2 = st.columns([2, 1])
-                del_id = col_d1.number_input("삭제 ID", min_value=0, step=1)
-                if col_d2.form_submit_button("삭제"):
+                del_id = st.number_input("삭제 ID", min_value=0, step=1)
+                if st.form_submit_button("삭제"):
                     conn.execute(f"DELETE FROM payments WHERE id={del_id}"); conn.commit(); st.rerun()
         
         st.divider()
@@ -400,7 +404,9 @@ with tabs[3]:
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("총 실입금 환산액", f"₩ {tk_all:,.0f}"); m2.metric("KRW 실입금 합계", f"₩ {tk:,.0f}"); m3.metric("USD 실입금 합계", f"$ {tu:,.2f}"); m4.metric("CNY 실입금 합계", f"¥ {tc:,.2f}")
 
+# ------------------------------------------
 # [Tab 4] 거래처 관리
+# ------------------------------------------
 with tabs[4]:
     st.header("거래처 관리")
     v1, v2 = st.columns([1.2, 0.8])
@@ -435,7 +441,9 @@ with tabs[4]:
                 else: conn.execute("UPDATE vendors SET 은행=?, 계좌번호=?, 예금주=?, 기본유형=? WHERE 거래처명=?", (r['은행'], r['계좌번호'], r['예금주'], r['기본유형'], r['거래처명']))
             conn.commit(); st.rerun()
 
+# ------------------------------------------
 # [Tab 5] 환율 관리
+# ------------------------------------------
 with tabs[5]:
     st.header("환율 정밀 분석")
     cu1, cu2 = st.columns(2)
@@ -447,16 +455,16 @@ with tabs[5]:
         f_cny = st.file_uploader("CNY/KRW", type=['csv'], key="c")
         if f_cny and st.button("CNY 업데이트"):
             if process_exchange_csv(f_cny, "CNY"): st.rerun()
-    ex_db = pd.read_sql("SELECT * FROM exchange_rates ORDER BY 날짜 ASC", conn)
-    if not ex_db.empty:
-        ex_db['ym'] = pd.to_datetime(ex_db['날짜']).dt.strftime('%Y-%m')
-        m_mean = ex_db.groupby('ym').agg({'usd': lambda x: x[x>0].mean() if not x[x>0].empty else 0.0, 'cny': lambda x: x[x>0].mean() if not x[x>0].empty else 0.0}).reset_index().fillna(0)
+    ex_db_plot = pd.read_sql("SELECT * FROM exchange_rates ORDER BY 날짜 ASC", conn)
+    if not ex_db_plot.empty:
+        ex_db_plot['ym'] = pd.to_datetime(ex_db_plot['날짜']).dt.strftime('%Y-%m')
+        m_mean = ex_db_plot.groupby('ym').agg({'usd': lambda x: x[x>0].mean(), 'cny': lambda x: x[x>0].mean()}).reset_index().fillna(0)
         m_mean['year'], m_mean['month'] = m_mean['ym'].str[:4].astype(int), m_mean['ym'].str[5:].astype(int)
         st.subheader("평균 추이"); cc1, cc2 = st.columns(2)
         with cc1:
-            fig_u = go.Figure(); fig_u.add_trace(go.Scatter(x=m_mean['ym'], y=m_mean['usd'], mode='lines+markers', name='USD')); fig_u.update_layout(yaxis=dict(range=[1360, 1540], dtick=20), height=350, template="plotly_white"); st.plotly_chart(fig_u, use_container_width=True)
+            fig_u = go.Figure(); fig_u.add_trace(go.Scatter(x=m_mean['ym'], y=m_mean['usd'], mode='lines+markers', name='USD')); fig_u.update_layout(yaxis=dict(range=[1300, 1600]), height=350, template="plotly_white"); st.plotly_chart(fig_u, use_container_width=True)
         with cc2:
-            fig_c = go.Figure(); fig_c.add_trace(go.Scatter(x=m_mean['ym'], y=m_mean['cny'], mode='lines+markers', name='CNY', line=dict(color='orange'))); fig_c.update_layout(yaxis=dict(range=[186, 226], dtick=2), height=350, template="plotly_white"); st.plotly_chart(fig_c, use_container_width=True)
+            fig_c = go.Figure(); fig_c.add_trace(go.Scatter(x=m_mean['ym'], y=m_mean['cny'], mode='lines+markers', name='CNY', line=dict(color='orange'))); fig_c.update_layout(yaxis=dict(range=[180, 210]), height=350, template="plotly_white"); st.plotly_chart(fig_c, use_container_width=True)
         
         def get_report(df, col):
             ys = sorted(df['year'].unique(), reverse=True)
