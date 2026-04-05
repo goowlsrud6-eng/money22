@@ -14,7 +14,7 @@ import urllib.request
 def run_backup():
     if not os.path.exists('backups'):
         os.makedirs('backups')
-    db_file = 'finance_final_v125.db'
+    db_file = 'finance_final_v126.db'
     today_str = datetime.now().strftime('%Y%m%d')
     backup_file = f"backups/backup_{today_str}.db"
     if os.path.exists(db_file) and not os.path.exists(backup_file):
@@ -25,7 +25,7 @@ run_backup()
 
 @st.cache_resource
 def get_db_connection():
-    conn = sqlite3.connect('finance_final_v125.db', check_same_thread=False)
+    conn = sqlite3.connect('finance_final_v126.db', check_same_thread=False)
     c = conn.cursor()
     c.execute('CREATE TABLE IF NOT EXISTS vendors (거래처명 TEXT PRIMARY KEY, 은행 TEXT, 계좌번호 TEXT, 예금주 TEXT, 기본유형 TEXT)')
     c.execute('''CREATE TABLE IF NOT EXISTS orders 
@@ -47,7 +47,7 @@ if 'order_up_key' not in st.session_state: st.session_state.order_up_key = 0
 if 'pay_up_key' not in st.session_state: st.session_state.pay_up_key = 1000
 
 # ==========================================
-# 2. 유틸리티 함수 (날짜 정제 및 실시간 환율)
+# 2. 유틸리티 함수
 # ==========================================
 def to_float(val):
     try:
@@ -101,7 +101,7 @@ def process_exchange_csv(file, currency_type):
     except Exception as e:
         st.error(f"환율 파일 처리 오류: {e}"); return False
 
-def process_ecount_v125(file):
+def process_ecount_v126(file):
     try:
         df = pd.read_excel(file, header=None)
         raw_oid = str(df.iloc[1, 0]).split(":")[-1].strip() if ":" in str(df.iloc[1,0]) else str(df.iloc[1, 0])
@@ -139,7 +139,6 @@ def process_ecount_v125(file):
 # ==========================================
 # 4. 메인 UI 
 # ==========================================
-# 이모지 제거하여 Syntax Error 완전 방지
 tabs = st.tabs(["입금 입력", "입금 엑셀 업로드", "발주서 등록", "상세내역 및 정산", "거래처 관리", "환율 관리"])
 
 # ------------------------------------------
@@ -149,7 +148,7 @@ with tabs[0]:
     st.header("입금 내역 수기 입력")
     v_data = pd.read_sql("SELECT * FROM vendors", conn)
     o_active = pd.read_sql("SELECT 발주번호 FROM orders WHERE 마감여부=0", conn)
-    with st.form("pay_manual_v125", clear_on_submit=True):
+    with st.form("pay_manual_v126", clear_on_submit=True):
         c1, c2 = st.columns(2)
         p_oid = c1.selectbox("발주번호 연동", ["없음"] + list(o_active['발주번호']))
         p_date = c2.date_input("입금일", value=datetime.now())
@@ -232,7 +231,7 @@ with tabs[2]:
             success_cnt = 0
             error_messages = []
             for of in of_list: 
-                is_success, err_msg = process_ecount_v125(of)
+                is_success, err_msg = process_ecount_v126(of)
                 if is_success:
                     success_cnt += 1
                 else:
@@ -246,7 +245,7 @@ with tabs[2]:
     with c_o2:
         st.subheader("수기 발주 등록")
         v_list = pd.read_sql("SELECT 거래처명 FROM vendors", conn)
-        with st.form("ord_manual_v125"):
+        with st.form("ord_manual_v126"):
             mi = st.text_input("발주번호")
             m_step = st.text_input("발주차수")
             md = st.date_input("발주일")
@@ -285,7 +284,7 @@ with tabs[2]:
             st.rerun()
 
 # ------------------------------------------
-# [Tab 3] 상세내역 및 통합 정산
+# [Tab 3] 상세내역 및 통합 정산 (★★ 검색 에러 완벽 방어 ★★)
 # ------------------------------------------
 with tabs[3]:
     st.header("상세 내역 및 통합 정산")
@@ -309,6 +308,8 @@ with tabs[3]:
             cat_sum['총합계'] = cat_sum['실입금액'] + cat_sum['선급금액']
             st.write(f"#### {y}년 {m if m != '전체' else ''} 유형별 요약")
             st.table(cat_sum.style.format({'실입금액': '{:,.2f}', '선급금액': '{:,.2f}', '총합계': '{:,.2f}'}))
+        else:
+            st.info("검색 조건에 맞는 데이터가 없습니다.")
         
         st.divider()
         st.subheader("발주번호별 정산 및 미수금 현황")
@@ -344,7 +345,12 @@ with tabs[3]:
             return (row['실입금액'] + row['선급금액']) * rate
 
         fil_p_merged = pd.merge(fil_p, o_all[['발주번호', '발주차수', '발주총액']], on='발주번호', how='left')
-        fil_p_merged['예상환산액(KRW)'] = fil_p_merged.apply(calc_krw_estimate, axis=1)
+        
+        # ★ ValueError 원천 차단: 검색 결과가 0건일 때 apply() 대신 빈 컬럼 생성
+        if fil_p_merged.empty:
+            fil_p_merged['예상환산액(KRW)'] = pd.Series(dtype=float)
+        else:
+            fil_p_merged['예상환산액(KRW)'] = fil_p_merged.apply(calc_krw_estimate, axis=1)
         
         cols = list(fil_p_merged.columns)
         if 'dt' in cols: cols.remove('dt')
@@ -377,7 +383,7 @@ with tabs[3]:
                 st.success("저장 완료!")
                 st.rerun()
         with eb2:
-            with st.form("delete_form_v125", clear_on_submit=True):
+            with st.form("delete_form_v126", clear_on_submit=True):
                 col_d1, col_d2 = st.columns([2, 1])
                 del_id = col_d1.number_input("삭제할 ID 번호 입력", min_value=0, step=1)
                 if col_d2.form_submit_button("해당 ID 삭제"):
@@ -389,11 +395,15 @@ with tabs[3]:
         st.divider()
         st.markdown(f"### 현재 검색 목록 총 합계 ({len(fil_p_merged)}건)")
         
-        tot_krw_all = fil_p_merged['예상환산액(KRW)'].sum()
-        tot_krw = fil_p_merged[fil_p_merged['통화']=='한화']['실입금액'].sum() + fil_p_merged[fil_p_merged['통화']=='한화']['선급금액'].sum()
-        tot_usd = fil_p_merged[fil_p_merged['통화']=='USD']['실입금액'].sum() + fil_p_merged[fil_p_merged['통화']=='USD']['선급금액'].sum()
-        tot_cny = fil_p_merged[fil_p_merged['통화']=='CNY']['실입금액'].sum() + fil_p_merged[fil_p_merged['통화']=='CNY']['선급금액'].sum()
-        
+        # ★ 합계 계산 시에도 빈 데이터 에러 방지
+        if not fil_p_merged.empty:
+            tot_krw_all = fil_p_merged['예상환산액(KRW)'].sum()
+            tot_krw = fil_p_merged[fil_p_merged['통화']=='한화']['실입금액'].sum() + fil_p_merged[fil_p_merged['통화']=='한화']['선급금액'].sum()
+            tot_usd = fil_p_merged[fil_p_merged['통화']=='USD']['실입금액'].sum() + fil_p_merged[fil_p_merged['통화']=='USD']['선급금액'].sum()
+            tot_cny = fil_p_merged[fil_p_merged['통화']=='CNY']['실입금액'].sum() + fil_p_merged[fil_p_merged['통화']=='CNY']['선급금액'].sum()
+        else:
+            tot_krw_all = tot_krw = tot_usd = tot_cny = 0.0
+            
         mc1, mc2, mc3, mc4 = st.columns(4)
         mc1.metric("총 예상 환산액", f"₩ {tot_krw_all:,.0f}")
         mc2.metric("순수 한화(KRW) 합계", f"₩ {tot_krw:,.0f}")
@@ -408,7 +418,7 @@ with tabs[4]:
     cv1, cv2 = st.columns([1.2, 0.8])
     with cv1:
         st.subheader("신규 거래처 수기 등록")
-        with st.form("vn_reg_v125", clear_on_submit=True):
+        with st.form("vn_reg_v126", clear_on_submit=True):
             vn = st.text_input("거래처명")
             vt = st.selectbox("유형", CATEGORIES)
             vc1, vc2, vc3 = st.columns(3)
