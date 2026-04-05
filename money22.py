@@ -14,7 +14,7 @@ import urllib.request
 def run_backup():
     if not os.path.exists('backups'):
         os.makedirs('backups')
-    db_file = 'finance_final_v131.db'
+    db_file = 'finance_final_v132.db'
     today_str = datetime.now().strftime('%Y%m%d')
     backup_file = f"backups/backup_{today_str}.db"
     
@@ -26,7 +26,7 @@ run_backup()
 
 @st.cache_resource
 def get_db_connection():
-    conn = sqlite3.connect('finance_final_v131.db', check_same_thread=False)
+    conn = sqlite3.connect('finance_final_v132.db', check_same_thread=False)
     c = conn.cursor()
     c.execute('CREATE TABLE IF NOT EXISTS vendors (거래처명 TEXT PRIMARY KEY, 은행 TEXT, 계좌번호 TEXT, 예금주 TEXT, 기본유형 TEXT)')
     c.execute('''CREATE TABLE IF NOT EXISTS orders 
@@ -50,7 +50,7 @@ if 'pay_up_key' not in st.session_state:
     st.session_state.pay_up_key = 1000
 
 # ==========================================
-# 2. 유틸리티 함수 (스마트 매핑 및 정제)
+# 2. 유틸리티 함수 (★ v91 원본 완벽 복원 ★)
 # ==========================================
 def to_float(val):
     try:
@@ -66,24 +66,16 @@ def to_str(val):
     s = str(val).strip()
     return "" if s.lower() in ["nan", "none", ""] else s
 
-def smart_date(date_str, default_now=True):
+def smart_date(date_str):
+    """
+    쓸데없는 정규식 다 지우고, 가장 완벽하게 작동했던 v91 원본 코드로 복구했습니다.
+    """
     try:
-        if pd.isna(date_str) or str(date_str).strip() == "": 
-            return datetime.now().strftime("%Y-%m-%d") if default_now else None
-        ds = str(date_str).strip()
-        ds = re.sub(r'[^\d]+', '-', ds).strip('-')
+        ds = to_str(date_str).replace(" ", "").replace(".", "-")
+        if not ds: return datetime.now().strftime("%Y-%m-%d")
         return pd.to_datetime(ds).strftime("%Y-%m-%d")
     except: 
-        return datetime.now().strftime("%Y-%m-%d") if default_now else None
-
-# ★ 컬럼명이 조금 달라도 찰떡같이 찾아내는 AI식 매핑 함수
-def get_val_alias(row, aliases):
-    for col in row.index:
-        col_clean = str(col).replace(' ', '').strip()
-        for alias in aliases:
-            if alias in col_clean:
-                return row[col]
-    return None
+        return datetime.now().strftime("%Y-%m-%d")
 
 @st.cache_data(ttl=3600)
 def get_realtime_rate(currency):
@@ -103,16 +95,13 @@ def get_realtime_rate(currency):
 # ==========================================
 def process_exchange_csv(file, currency_type):
     try:
-        try:
-            df = pd.read_csv(file, encoding='utf-8-sig')
-        except UnicodeDecodeError:
-            file.seek(0)
-            df = pd.read_csv(file, encoding='cp949')
-            
+        df = pd.read_csv(file)
         df.columns = [c.strip().replace('\ufeff', '') for c in df.columns]
+        
         for _, row in df.iterrows():
             date_val = smart_date(row['날짜'])
             price_val = to_float(row['종가'])
+            
             existing = pd.read_sql(f"SELECT * FROM exchange_rates WHERE 날짜 = '{date_val}'", conn)
             if existing.empty:
                 usd = price_val if currency_type == "USD" else 0.0
@@ -121,13 +110,14 @@ def process_exchange_csv(file, currency_type):
             else:
                 col = "usd" if currency_type == "USD" else "cny"
                 conn.execute(f"UPDATE exchange_rates SET {col} = ? WHERE 날짜 = ?", (price_val, date_val))
+                
         conn.commit()
         return True
     except Exception as e: 
         st.error(f"환율 분석 오류: {e}")
         return False
 
-def process_ecount_v131(file):
+def process_ecount_v132(file):
     try:
         df = pd.read_excel(file, header=None)
         raw_oid = str(df.iloc[1, 0]).split(":")[-1].strip() if ":" in str(df.iloc[1,0]) else str(df.iloc[1, 0])
@@ -152,9 +142,11 @@ def process_ecount_v131(file):
         
         f6 = str(df.iloc[5, 5]) if len(df) > 5 else ""
         curr = "USD" if "USD" in f6 else ("CNY" if any(x in f6 for x in ["중국", "CNY"]) else "한화")
+        
         p_col = 1 if curr == "한화" else 2
         prods = df.iloc[6:, p_col].dropna().astype(str).tolist()
         prod_n = (prods[0].split("[")[0].strip() + (f" 외 {len(prods)-1}건" if len(prods)>1 else "")) if prods else "품목미상"
+        
         l_idx = df.iloc[:, 5].last_valid_index()
         total = to_float(df.iloc[l_idx, 5]) if curr != "한화" and l_idx else to_float(str(df.iloc[4, 0]).split(":")[-1])
         
@@ -178,7 +170,7 @@ with tabs[0]:
     v_data = pd.read_sql("SELECT * FROM vendors", conn)
     o_active = pd.read_sql("SELECT 발주번호 FROM orders WHERE 마감여부=0", conn)
     
-    with st.form("pay_manual_v131", clear_on_submit=True):
+    with st.form("pay_manual_v132", clear_on_submit=True):
         c1, c2 = st.columns(2)
         p_oid = c1.selectbox("발주번호 연동", ["없음"] + list(o_active['발주번호']))
         p_date = c2.date_input("입금일", value=datetime.now())
@@ -206,31 +198,25 @@ with tabs[0]:
                     INSERT INTO payments (발주번호, 입금일, 유형, 거래처명, 상품명, 통화, 실입금액, 선급금액, 메모, 한화환산액, 은행, 계좌번호, 예금주) 
                     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ''', (to_str(p_oid) if p_oid != "없음" else None, p_date.strftime("%Y-%m-%d"), p_ct, p_vn, p_pr, p_cur, p_dep, p_pre, p_memo, (p_dep+p_pre)*rate, vi['은행'], vi['계좌번호'], vi['예금주']))
+                
                 conn.commit()
                 st.success("저장 완료!")
                 st.rerun()
 
 # ------------------------------------------
-# [Tab 1] 입금 엑셀 업로드 (★★ 인코딩/매핑 버그 완전 해결본 ★★)
+# [Tab 1] 입금 엑셀 업로드 (★ v91 원본 로직 완벽 복원 ★)
 # ------------------------------------------
 with tabs[1]:
     st.header("통합 입금 엑셀 업로드")
-    pay_tmp = pd.DataFrame(columns=["발주번호", "거래처명", "유형", "상품명", "입금일", "실입금액", "선급금액", "송금사유"])
+    pay_tmp = pd.DataFrame(columns=["발주번호", "거래처", "유형", "상품명", "입금일", "실입금액", "선급금액", "송금사유"])
     st.download_button(label="입금 업로드 양식 다운로드", data=pay_tmp.to_csv(index=False).encode('utf-8-sig'), file_name='payment_template.csv')
     
     f_p = st.file_uploader("입금 CSV 선택", type=['csv'], key=f"pay_up_{st.session_state.pay_up_key}")
     if f_p and st.button("데이터 일괄 저장"):
         try:
-            # 1. 엑셀 한글 인코딩(CP949) 완벽 호환
-            try:
-                df_p = pd.read_csv(f_p, encoding='utf-8-sig')
-            except UnicodeDecodeError:
-                f_p.seek(0)
-                try:
-                    df_p = pd.read_csv(f_p, encoding='cp949')
-                except UnicodeDecodeError:
-                    f_p.seek(0)
-                    df_p = pd.read_csv(f_p, encoding='euc-kr')
+            # 쓸데없는 인코딩 예외처리 지우고 v91처럼 정석대로 읽음
+            df_p = pd.read_csv(f_p)
+            df_p.columns = [str(c).strip().replace('\ufeff', '') for c in df_p.columns]
             
             v_l = pd.read_sql("SELECT * FROM vendors", conn)
             o_l = pd.read_sql("SELECT * FROM orders", conn)
@@ -238,14 +224,15 @@ with tabs[1]:
             success_cnt = 0
             
             for _, r in df_p.iterrows():
-                # 2. 강력한 별명 매핑 기능 적용 (컬럼명이 조금 달라도 찾아냄)
-                oid = to_str(get_val_alias(r, ['발주번호', '주문번호', '발주']))
-                vn_raw = to_str(get_val_alias(r, ['거래처', '업체', '수신']))
+                # v91처럼 양식에 맞는 컬럼명을 정직하게 가져옵니다 (AI 매핑 삭제)
+                oid = to_str(r.get('발주번호'))
+                vn_raw = to_str(r.get('거래처'))
                 
                 if not vn_raw and not oid: 
                     continue
                 
-                pd_s = smart_date(get_val_alias(r, ['입금일', '날짜', '결제일', '일자']))
+                # 복원된 v91 smart_date 함수가 정확하게 날짜를 파싱합니다
+                pd_s = smart_date(r.get('입금일'))
                 
                 if oid and not o_l[o_l['발주번호'] == oid].empty:
                     info = o_l[o_l['발주번호'] == oid].iloc[0]
@@ -255,14 +242,13 @@ with tabs[1]:
                     cur = info['통화']
                 else: 
                     vn = vn_raw
-                    pc = to_str(get_val_alias(r, ['유형', '분류'])) or "사입"
-                    pp = to_str(get_val_alias(r, ['상품', '품목']))
-                    cur = to_str(get_val_alias(r, ['통화', '화폐'])) or "한화"
+                    pc = to_str(r.get('유형')) or "사입"
+                    pp = to_str(r.get('상품명'))
+                    cur = "한화"
                     
                 vi = v_l[v_l['거래처명'] == vn] if vn else pd.DataFrame()
-                dep = to_float(get_val_alias(r, ['실입금', '입금액', '금액', '결제']))
-                pre = to_float(get_val_alias(r, ['선급', '계약금']))
-                memo = to_str(get_val_alias(r, ['사유', '메모', '비고', '내용']))
+                dep = to_float(r.get('실입금액'))
+                pre = to_float(r.get('선급금액'))
                 rt = 1350.0 if cur == "USD" else (190.0 if cur == "CNY" else 1.0)
                 
                 b_bank = vi.iloc[0]['은행'] if not vi.empty else ""
@@ -272,21 +258,16 @@ with tabs[1]:
                 conn.execute('''
                     INSERT INTO payments (발주번호, 입금일, 유형, 거래처명, 상품명, 통화, 실입금액, 선급금액, 메모, 한화환산액, 은행, 계좌번호, 예금주) 
                     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
-                ''', (oid if oid else None, pd_s, pc, vn, pp, cur, dep, pre, memo, (dep+pre)*rt, b_bank, b_acc, b_hold))
+                ''', (oid if oid else None, pd_s, pc, vn, pp, cur, dep, pre, to_str(r.get('송금사유')), (dep+pre)*rt, b_bank, b_acc, b_hold))
                 
                 success_cnt += 1
                 
             conn.commit()
-            
-            if success_cnt > 0:
-                st.success(f"총 {success_cnt}건 일괄 저장 성공!")
-                st.session_state.pay_up_key += 1
-                st.rerun()
-            else:
-                st.warning("데이터를 1건도 저장하지 못했습니다. CSV 파일의 열 이름(발주번호, 거래처명 등)이 맞는지 확인해주세요.")
-                
+            st.success(f"총 {success_cnt}건 일괄 저장 완료!")
+            st.session_state.pay_up_key += 1
+            st.rerun()
         except Exception as e: 
-            st.error(f"파일 처리 오류: {e}")
+            st.error(f"오류: {e}")
 
 # ------------------------------------------
 # [Tab 2] 발주서 등록 및 마감
@@ -306,7 +287,7 @@ with tabs[2]:
             error_messages = []
             
             for of in of_list:
-                ok, msg = process_ecount_v131(of)
+                ok, msg = process_ecount_v132(of)
                 if ok: 
                     success_cnt += 1
                 else: 
@@ -324,7 +305,7 @@ with tabs[2]:
     with c_o2:
         st.subheader("수기 발주 등록")
         v_list = pd.read_sql("SELECT 거래처명 FROM vendors", conn)
-        with st.form("ord_manual_v131"):
+        with st.form("ord_manual_v132"):
             mi = st.text_input("발주번호")
             m_step = st.text_input("발주차수")
             md = st.date_input("발주일")
@@ -403,7 +384,6 @@ with tabs[3]:
         st.divider()
         st.subheader("발주번호별 정산 및 미수금 현황")
         
-        # 누락 없는 전체 표시를 위해 dropna=False 로 그룹화
         p_agg = p_all.groupby('발주번호', dropna=False).agg({'실입금액':'sum'}).reset_index()
         sum_df = pd.merge(o_all, p_agg, on='발주번호', how='outer')
         
@@ -476,7 +456,7 @@ with tabs[3]:
                 st.success("저장 완료!")
                 st.rerun()
         with eb2:
-            with st.form("delete_v131", clear_on_submit=True):
+            with st.form("delete_v132", clear_on_submit=True):
                 col_d1, col_d2 = st.columns([2, 1])
                 del_id = col_d1.number_input("삭제 ID", min_value=0, step=1)
                 if col_d2.form_submit_button("해당 ID 삭제"):
@@ -510,7 +490,7 @@ with tabs[4]:
     cv1, cv2 = st.columns([1.2, 0.8])
     with cv1:
         st.subheader("신규 등록")
-        with st.form("vn_v131", clear_on_submit=True):
+        with st.form("vn_v132", clear_on_submit=True):
             vn = st.text_input("거래처명")
             vt = st.selectbox("유형", CATEGORIES)
             vc1, vc2, vc3 = st.columns(3)
@@ -529,21 +509,13 @@ with tabs[4]:
         st.download_button(label="양식 다운로드", data=v_tmp.to_csv(index=False).encode('utf-8-sig'), file_name='vendor_template.csv')
         vf = st.file_uploader("거래처 CSV", type=['csv'])
         if vf and st.button("업로드"):
-            try:
-                try:
-                    v_up = pd.read_csv(vf, encoding='utf-8-sig')
-                except UnicodeDecodeError:
-                    vf.seek(0)
-                    v_up = pd.read_csv(vf, encoding='cp949')
-                
-                for _, r in v_up.iterrows():
-                    conn.execute("INSERT OR REPLACE INTO vendors VALUES (?,?,?,?,?)", 
-                                 (r['거래처명'], r['은행'], r['계좌번호'], r['예금주'], r['기본유형']))
-                conn.commit()
-                st.success("완료!")
-                st.rerun()
-            except Exception as e:
-                st.error(f"오류: {e}")
+            v_up = pd.read_csv(vf)
+            for _, r in v_up.iterrows():
+                conn.execute("INSERT OR REPLACE INTO vendors VALUES (?,?,?,?,?)", 
+                             (r['거래처명'], r['은행'], r['계좌번호'], r['예금주'], r['기본유형']))
+            conn.commit()
+            st.success("완료!")
+            st.rerun()
             
     st.divider()
     v_data = pd.read_sql("SELECT * FROM vendors", conn)
