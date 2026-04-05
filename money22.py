@@ -14,19 +14,19 @@ def run_backup():
     """안정적인 운영을 위해 매일 첫 접속 시 DB 백업 생성"""
     if not os.path.exists('backups'):
         os.makedirs('backups')
-    db_file = 'finance_final_v121.db'
+    db_file = 'finance_final_v122.db'
     today_str = datetime.now().strftime('%Y%m%d')
     backup_file = f"backups/backup_{today_str}.db"
     if os.path.exists(db_file) and not os.path.exists(backup_file):
         shutil.copy2(db_file, backup_file)
 
-st.set_page_config(page_title="자금 관리 시스템 v121", layout="wide", page_icon="💰")
+st.set_page_config(page_title="자금 관리 시스템 v122", layout="wide", page_icon="💰")
 run_backup()
 
 @st.cache_resource
 def get_db_connection():
     """모든 테이블 스키마 정의"""
-    conn = sqlite3.connect('finance_final_v121.db', check_same_thread=False)
+    conn = sqlite3.connect('finance_final_v122.db', check_same_thread=False)
     c = conn.cursor()
     # [1] 거래처 마스터
     c.execute('''CREATE TABLE IF NOT EXISTS vendors 
@@ -95,7 +95,7 @@ def process_exchange_csv(file, currency_type):
     except Exception as e:
         st.error(f"환율 파일 처리 오류: {e}"); return False
 
-def process_ecount_v121(file):
+def process_ecount_v122(file):
     """에러 메시지를 정상적으로 반환하는 발주서 분석기"""
     try:
         df = pd.read_excel(file, header=None)
@@ -141,7 +141,7 @@ with tabs[0]:
     st.header("📝 입금 내역 수기 입력")
     v_data = pd.read_sql("SELECT * FROM vendors", conn)
     o_active = pd.read_sql("SELECT 발주번호 FROM orders WHERE 마감여부=0", conn)
-    with st.form("pay_manual_v121", clear_on_submit=True):
+    with st.form("pay_manual_v122", clear_on_submit=True):
         c1, c2 = st.columns(2)
         p_oid = c1.selectbox("🔗 발주번호 연동", ["없음"] + list(o_active['발주번호']))
         p_date = c2.date_input("입금일", value=datetime.now())
@@ -216,12 +216,11 @@ with tabs[2]:
         st.download_button(label="📥 수기용 발주 양식 다운로드", data=ord_tmp.to_csv(index=False).encode('utf-8-sig'), file_name='order_template.csv')
         of_list = st.file_uploader("발주서(xlsx) 선택", type=['xlsx'], accept_multiple_files=True, key=f"ord_{st.session_state.order_up_key}")
         
-        # ★ 누락됐던 에러 알람 로직 보장
         if of_list and st.button("🚀 일괄 등록 실행"):
             success_cnt = 0
             error_messages = []
             for of in of_list: 
-                is_success, err_msg = process_ecount_v121(of)
+                is_success, err_msg = process_ecount_v122(of)
                 if is_success:
                     success_cnt += 1
                 else:
@@ -239,7 +238,7 @@ with tabs[2]:
     with c_o2:
         st.subheader("✍️ 수기 발주 등록")
         v_list = pd.read_sql("SELECT 거래처명 FROM vendors", conn)
-        with st.form("ord_manual_v121"):
+        with st.form("ord_manual_v122"):
             mi = st.text_input("발주번호")
             m_step = st.text_input("발주차수")
             md = st.date_input("발주일")
@@ -278,7 +277,7 @@ with tabs[2]:
             st.rerun()
 
 # ------------------------------------------
-# [Tab 3] 상세내역 및 통합 정산 (★★★ 4가지 디테일 물리적 복구 확정 ★★★)
+# [Tab 3] 상세내역 및 통합 정산
 # ------------------------------------------
 with tabs[3]:
     st.header("🔍 상세 내역 및 통합 정산")
@@ -309,7 +308,6 @@ with tabs[3]:
         sum_df = pd.merge(o_all, p_agg, on='발주번호', how='left').fillna(0)
         sum_df['잔액'] = sum_df['발주총액'] - sum_df['실입금액']
         
-        # ★ [복구 1 & 2] 상태 텍스트 추가 및 마감 회색 음영 처리 함수
         sum_df['상태'] = sum_df['마감여부'].apply(lambda x: "✅ 마감완료" if x == 1 else "⏳ 진행중")
         
         def highlight_closed(row):
@@ -323,19 +321,23 @@ with tabs[3]:
         st.divider()
         st.subheader("📑 상세 리스트 편집 및 삭제")
         
-        # ★ [복구 3] 입금 상세 리스트에 '발주차수' 연동하여 표시
-        fil_p_merged = pd.merge(fil_p, o_all[['발주번호', '발주차수']], on='발주번호', how='left')
+        # ★ [개선점 1] 상세 리스트에 '발주총액' 추가 (발주차수와 함께 배치)
+        fil_p_merged = pd.merge(fil_p, o_all[['발주번호', '발주차수', '발주총액']], on='발주번호', how='left')
         cols = list(fil_p_merged.columns)
         if 'dt' in cols: cols.remove('dt')
-        if '발주차수' in cols:
-            cols.remove('발주차수')
-            idx = cols.index('발주번호') if '발주번호' in cols else 0
-            cols.insert(idx+1, '발주차수')
+        
+        if '발주차수' in cols: cols.remove('발주차수')
+        if '발주총액' in cols: cols.remove('발주총액')
+        
+        idx = cols.index('발주번호') if '발주번호' in cols else 0
+        cols.insert(idx+1, '발주차수')
+        cols.insert(idx+2, '발주총액') # 발주번호 -> 발주차수 -> 발주총액 순서
+        
         fil_p_merged = fil_p_merged[cols]
         
-        ed_p = st.data_editor(fil_p_merged.sort_values('입금일', ascending=False), hide_index=True, use_container_width=True, disabled=["id", "발주차수"])
+        # 발주 마스터 데이터(발주차수, 발주총액)는 입금 탭에서 실수로 수정하지 못하게 disabled
+        ed_p = st.data_editor(fil_p_merged.sort_values('입금일', ascending=False), hide_index=True, use_container_width=True, disabled=["id", "발주차수", "발주총액"])
         
-        # ★ [복구 4] 데이터 수정 저장 및 'ID 번호 삭제 폼' 부활
         eb1, eb2 = st.columns([1, 4])
         with eb1:
             if st.button("💾 상세 수정 저장"):
@@ -346,7 +348,7 @@ with tabs[3]:
                 st.success("저장 완료!")
                 st.rerun()
         with eb2:
-            with st.form("delete_form_v121", clear_on_submit=True):
+            with st.form("delete_form_v122", clear_on_submit=True):
                 col_d1, col_d2 = st.columns([2, 1])
                 del_id = col_d1.number_input("삭제할 ID 번호 입력", min_value=0, step=1)
                 if col_d2.form_submit_button("🗑️ 해당 ID 삭제"):
@@ -363,7 +365,7 @@ with tabs[4]:
     cv1, cv2 = st.columns([1.2, 0.8])
     with cv1:
         st.subheader("➕ 신규 거래처 수기 등록")
-        with st.form("vn_reg_v121", clear_on_submit=True):
+        with st.form("vn_reg_v122", clear_on_submit=True):
             vn = st.text_input("거래처명")
             vt = st.selectbox("유형", CATEGORIES)
             vc1, vc2, vc3 = st.columns(3)
@@ -396,7 +398,7 @@ with tabs[4]:
         st.subheader("🏢 거래처 정보 관리 및 소급 적용")
         orig_v = v_data['거래처명'].tolist()
         ev_v = st.data_editor(v_data, hide_index=True, use_container_width=True)
-        if st.button("💾 거래처명 동기화 저장"):
+        if st.button("💾 거래처 동기화 저장"):
             for idx, r in ev_v.iterrows():
                 old_n, new_n = orig_v[idx], r['거래처명']
                 if old_n != new_n:
@@ -472,12 +474,16 @@ with tabs[5]:
             res = pd.DataFrame({'월': range(1, 13)})
             
             c_data = df[df['year'] == curr_y].set_index('month')[col]
-            res[f'{curr_y}년 평균'] = res['월'].map(c_data)
             
+            # ★ [개선점 2] 과거 연도(prev_y)를 먼저 배치하여 2025 -> 2026 순서로 출력되게 함
             if prev_y:
                 p_data = df[df['year'] == prev_y].set_index('month')[col]
                 res[f'{prev_y}년 평균'] = res['월'].map(p_data)
-                
+            
+            # 그 다음 현재 연도 배치
+            res[f'{curr_y}년 평균'] = res['월'].map(c_data)
+            
+            if prev_y:
                 def calc_yoy(row):
                     cy, py = row[f'{curr_y}년 평균'], row[f'{prev_y}년 평균']
                     if pd.notnull(cy) and pd.notnull(py) and py > 0:
