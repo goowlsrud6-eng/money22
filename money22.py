@@ -323,7 +323,6 @@ with tabs[2]:
         
         flt_r2c1, flt_r2c2 = st.columns(2)
         filter_cat = flt_r2c1.selectbox("유형 필터", ["전체 유형"] + CATEGORIES)
-        # [디테일] 대소문자 무관 검색 로직
         search_key = flt_r2c2.text_input("업체/상품 검색 (대소문자 무관)")
         
         filtered_df = payments_all[payments_all['dt'].dt.year == target_year].copy()
@@ -335,19 +334,16 @@ with tabs[2]:
             filtered_df = filtered_df[filtered_df['거래처명'].str.contains(search_key, case=False, na=False) | 
                                       filtered_df['상품명'].str.contains(search_key, case=False, na=False)]
         
-        # 발주 정보 연동
         filtered_df = pd.merge(filtered_df, orders_all[['발주번호', '발주차수']], on='발주번호', how='left')
 
     with f_col2:
-        st.subheader("유형별 요약") # 제목 수정
+        st.subheader("유형별 요약")
         if not filtered_df.empty:
             summary_table = filtered_df.groupby('유형').agg({'실입금액':'sum', '선급금액':'sum'}).reset_index()
-            # [디테일] 요약 표 천단위 쉼표 포맷
             st.table(summary_table.style.format({'실입금액': '{:,.2f}', '선급금액': '{:,.2f}'}))
 
     st.divider()
     st.subheader("발주번호별 정산 및 미수금 현황")
-    # 발주번호가 있는 데이터만 정산 대상으로 필터링
     pay_agg = payments_all[payments_all['발주번호'].notnull() & (payments_all['발주번호'] != "")].groupby('발주번호').agg({'실입금액':'sum', '선급금액':'sum'}).reset_index()
     settle_df = pd.merge(orders_all, pay_agg, on='발주번호', how='left').fillna(0)
     settle_df['잔액'] = settle_df['발주총액'] - settle_df['실입금액']
@@ -356,7 +352,6 @@ with tabs[2]:
     
     view_settle = settle_df[['발주번호', '발주차수', '진행상태', '거래처명', '상품명', '발주총액', '실입금액', '선급금액', '잔액', '통화']]
     
-    # [디테일] 선급금액 > 0 (빨간색), 잔액 > 0 (파란색) 시각화 로직
     def color_settle_styles(row):
         styles = [''] * len(row)
         if row['선급금액'] > 0:
@@ -373,7 +368,6 @@ with tabs[2]:
     st.divider()
     st.subheader("상세 리스트 편집 및 상세")
     
-    # 환율 로직: 직전 월 소급 적용 엔진
     rates_db['ym'] = pd.to_datetime(rates_db['날짜']).dt.strftime('%Y-%m')
     monthly_rates = rates_db.groupby('ym').agg({'usd': lambda x: x[x>0].mean(), 'cny': lambda x: x[x>0].mean()}).fillna(0)
     
@@ -396,7 +390,6 @@ with tabs[2]:
     else:
         final_detail_df['예상환산액'] = pd.Series(dtype='float64')
 
-    # [디테일] 입금일을 발주총액과 실입금액 사이로 배치 및 회계 포맷팅 적용
     col_order = ['id', '유형', '발주번호', '거래처명', '상품명', '통화', '발주총액', '입금일', '실입금액', '선급금액', '예상환산액', '메모']
     
     edited_detail = st.data_editor(
@@ -423,7 +416,7 @@ with tabs[2]:
                 st.rerun()
 
     st.divider()
-    st.markdown(f"### 📊 현재 필터 결과 합계 ({len(final_detail_df)}건)")
+    st.markdown(f"### 📊 합계 리포트 ({len(final_detail_df)}건)")
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("총 한화 환산액", f"{final_detail_df['예상환산액'].sum():,.2f}")
     m2.metric("KRW 합계", f"{final_detail_df[final_detail_df['통화']=='한화']['실입금액'].sum():,.2f}")
@@ -431,20 +424,19 @@ with tabs[2]:
     m4.metric("CNY 합계", f"{final_detail_df[final_detail_df['통화']=='CNY']['실입금액'].sum():,.2f}")
 
 # ------------------------------------------------------------------------------
-# [Tab 3] 거래처 관리 (등록 폼 노출 + 수정 동기화 + 엑셀 업로드)
+# [Tab 3] 거래처 관리
 # ------------------------------------------------------------------------------
 with tabs[3]:
-    st.header("거래처 정보 마스터 관리")
+    st.header("거래처 정보 관리")
     vc_left, vc_right = st.columns([1.2, 0.8])
     
     with vc_left:
-        st.subheader("1. 거래처 조회 및 실시간 동기화 수정")
-        v_search_key = st.text_input("거래처명으로 신속 검색")
+        st.subheader("1. 거래처 조회 및 수정")
+        v_search_key = st.text_input("거래처명으로 검색")
         vendors_master = pd.read_sql("SELECT * FROM vendors", conn)
         if v_search_key:
             vendors_master = vendors_master[vendors_master['거래처명'].str.contains(v_search_key, case=False, na=False)]
         
-        # 수정 전 원본 이름 저장 (이름 변경 시 연동 업데이트용)
         original_v_names = vendors_master['거래처명'].tolist()
         edited_v_data = st.data_editor(vendors_master, hide_index=True, use_container_width=True)
         
@@ -453,7 +445,6 @@ with tabs[3]:
                 old_nm = original_v_names[idx]
                 new_nm = r['거래처명']
                 if old_nm != new_nm:
-                    # 마스터 이름이 바뀌면 모든 기록 테이블 소급 적용
                     conn.execute(f"DELETE FROM vendors WHERE 거래처명='{old_nm}'")
                     conn.execute("INSERT INTO vendors VALUES (?,?,?,?,?)", (new_nm, r['은행'], r['계좌번호'], r['예금주'], r['기본유형']))
                     conn.execute("UPDATE orders SET 거래처명=?, 유형=? WHERE 거래처명=?", (new_nm, r['기본유형'], old_nm))
@@ -462,14 +453,12 @@ with tabs[3]:
                     conn.execute("UPDATE vendors SET 은행=?, 계좌번호=?, 예금주=?, 기본유형=? WHERE 거래처명=?", 
                                  (r['은행'], r['계좌번호'], r['예금주'], r['기본유형'], r['거래처명']))
             conn.commit()
-            st.success("거래처 정보 및 관련 기록이 동기화되었습니다.")
             st.rerun()
             
     with vc_right:
-        # [원복] 등록 폼 상시 노출로 변경
-        st.subheader("2. 거래처 등록 및 업로드")
-        with st.form("new_vendor_v136_final"):
-            st.write("**신규 거래처 직접 등록**")
+        st.subheader("2. 등록 및 업로드")
+        with st.form("new_vendor_form"):
+            st.write("**신규 거래처 등록**")
             nv_n = st.text_input("거래처명")
             nv_t = st.selectbox("기본유형", CATEGORIES)
             nv_b = st.text_input("은행명")
@@ -485,46 +474,40 @@ with tabs[3]:
         st.write("**거래처 엑셀 일괄 업로드**")
         v_temp_df = pd.DataFrame(columns=["거래처명", "은행", "계좌번호", "예금주", "기본유형"])
         st.download_button("거래처 업로드 양식 받기", v_temp_df.to_csv(index=False).encode('utf-8-sig'), "vendor_template.csv")
-        uploaded_v_file = st.file_uploader("거래처 CSV 선택", type=['csv'], key="v_up_final")
+        uploaded_v_file = st.file_uploader("거래처 CSV 선택", type=['csv'], key="v_csv_up")
         if uploaded_v_file and st.button("거래처 일괄 저장"):
-            try:
-                v_up_df = pd.read_csv(uploaded_v_file)
-                v_up_df.columns = [str(c).strip().replace('\ufeff', '') for c in v_up_df.columns]
-                for _, row in v_up_df.iterrows():
-                    conn.execute("INSERT OR REPLACE INTO vendors VALUES (?,?,?,?,?)", (row['거래처명'], row['은행'], row['계좌번호'], row['예금주'], row['기본유형']))
-                conn.commit()
-                st.success("거래처 일괄 등록이 완료되었습니다.")
-                st.rerun()
-            except Exception as e: st.error(f"오류: {e}")
+            v_up_df = pd.read_csv(uploaded_v_file)
+            v_up_df.columns = [str(c).strip().replace('\ufeff', '') for c in v_up_df.columns]
+            for _, row in v_up_df.iterrows():
+                conn.execute("INSERT OR REPLACE INTO vendors VALUES (?,?,?,?,?)", (row['거래처명'], row['은행'], row['계좌번호'], row['예금주'], row['기본유형']))
+            conn.commit()
+            st.rerun()
 
 # ------------------------------------------------------------------------------
-# [Tab 4] 환율 관리 (날짜 형식 25.1월 + 2025->2026 순서 분석)
+# [Tab 4] 환율 관리 (오류 수정본)
 # ------------------------------------------------------------------------------
 with tabs[4]:
     st.header("환율 관리 및 정밀 분석")
     r_col1, r_col2 = st.columns(2)
     with r_col1:
-        fu_u = st.file_uploader("USD CSV", type=['csv'], key="tab4_u_f")
-        if fu_u and st.button("USD 환율 업데이트"): process_exchange_csv(fu_u, "USD"); st.rerun()
+        fu_u = st.file_uploader("USD CSV", type=['csv'], key="tab4_u")
+        if fu_u and st.button("USD 업데이트"): process_exchange_csv(fu_u, "USD"); st.rerun()
     with r_col2:
-        fu_c = st.file_uploader("CNY CSV", type=['csv'], key="tab4_c_f")
-        if fu_c and st.button("CNY 환율 업데이트"): process_exchange_csv(fu_c, "CNY"); st.rerun()
+        fu_c = st.file_uploader("CNY CSV", type=['csv'], key="tab4_c")
+        if fu_c and st.button("CNY 업데이트"): process_exchange_csv(fu_c, "CNY"); st.rerun()
         
     rates_final = pd.read_sql("SELECT * FROM exchange_rates ORDER BY 날짜 ASC", conn)
     if not rates_final.empty:
-        # [디테일] 날짜 포맷 '25.1월' 형태로 변환
         rates_final['ym_l'] = pd.to_datetime(rates_final['날짜']).dt.strftime('%y.%-m월')
         mean_data = rates_final.groupby('ym_l', sort=False).agg({'usd': lambda x: x[x>0].mean(), 'cny': lambda x: x[x>0].mean()}).reset_index()
         
         c_p1, c_p2 = st.columns(2)
         with c_p1:
             fig_usd = go.Figure(go.Scatter(x=mean_data['ym_l'], y=mean_data['usd'], mode='lines+markers', name='USD'))
-            # [디테일] USD 세로축 20단위 고정 및 소수점 2자리
             fig_usd.update_layout(title="USD 평균 추이", yaxis=dict(dtick=20, tickformat=",.2f"), template="plotly_white", height=400)
             st.plotly_chart(fig_usd, use_container_width=True)
         with c_p2:
             fig_cny = go.Figure(go.Scatter(x=mean_data['ym_l'], y=mean_data['cny'], mode='lines+markers', name='CNY', line=dict(color='orange')))
-            # [디테일] CNY 세로축 2단위 고정 및 소수점 2자리
             fig_cny.update_layout(title="CNY 평균 추이", yaxis=dict(dtick=2, tickformat=",.2f"), template="plotly_white", height=400)
             st.plotly_chart(fig_cny, use_container_width=True)
             
@@ -535,7 +518,6 @@ with tabs[4]:
         stats_df['yr'], stats_df['mo'] = stats_df['ym'].str[:4].astype(int), stats_df['ym'].str[5:].astype(int)
 
         def get_yr_analysis_v136(df, col_nm):
-            # [디테일] 연도 순서 과거 -> 최신 (2025, 2026)
             yrs = sorted(df['yr'].unique())
             if not yrs: return pd.DataFrame()
             res_df = pd.DataFrame({'월': [f"{i}월" for i in range(1, 13)]})
@@ -543,21 +525,30 @@ with tabs[4]:
                 m_map = df[df['yr'] == y].set_index('mo')[col_nm]
                 res_df[f'{y}년'] = res_df['월'].apply(lambda x: m_map.get(int(x.replace('월','')), 0))
             
-            # YoY(전년비) 및 MoM(전월비) 계산 로직 복구
             if len(yrs) >= 2:
                 cy, py = yrs[-1], yrs[-2]
-                res_df['전년비(YoY)'] = res_df.apply(lambda r: f"{(r[f'{cy}년']-r[f'{py}년']):+.2f}({((r[f'{cy}년']-r[f'{py}년'])/r[f'{py}년']*100):+.1f}%)" if r[f'{py}년']>0 and r[f'{cy}년']>0 else "-", axis=1)
+                def calc_yoy(r):
+                    v1, v2 = r[f'{cy}년'], r[f'{py}년']
+                    if v1 > 0 and v2 > 0: return f"{(v1-v2):+.2f}({((v1-v2)/v2*100):+.1f}%)"
+                    return "-"
+                res_df['전년비(YoY)'] = res_df.apply(calc_yoy, axis=1)
             
             df_srt = df.sort_values('ym').copy()
             df_srt['diff'], df_srt['prev'] = df_srt[col_nm].diff(), df_srt[col_nm].shift(1)
-            res_df['전월비(MoM)'] = res_df['월'].apply(lambda x: f"{df_srt[(df_srt['yr']==yrs[-1]) & (df_srt['mo']==int(x.replace('월','')))]['diff'].values[0]:+.2f}" if not df_srt[(df_srt['yr']==yrs[-1]) & (df_srt['mo']==int(x.replace('월','')))].empty else "-")
-            return res_df[res_df.iloc[:, 1:].sum(axis=1) > 0]
+            def calc_mom(r):
+                m_num = int(r['월'].replace('월',''))
+                row = df_srt[(df_srt['yr']==yrs[-1]) & (df_srt['mo']==m_num)]
+                if not row.empty and pd.notnull(row.iloc[0]['diff']):
+                    return f"{row.iloc[0]['diff']:+.2f}"
+                return "-"
+            res_df['전월비(MoM)'] = res_df.apply(calc_mom, axis=1)
+            
+            # [오류수정] sum() 대신 any()를 사용하여 데이터가 있는 행만 추출
+            mask = (res_df[f'{yrs[0]}년'] > 0)
+            for y in yrs[1:]: mask = mask | (res_df[f'{y}년'] > 0)
+            return res_df[mask].reset_index(drop=True)
 
         arc1, arc2 = st.columns(2)
-        with arc1: 
-            st.write("**USD 평균 환율**")
-            st.table(get_yr_analysis_v136(stats_df, 'usd').style.format(precision=2, thousands=","))
-        with arc2: 
-            st.write("**CNY 평균 환율**")
-            st.table(get_yr_analysis_v136(stats_df, 'cny').style.format(precision=2, thousands=","))
+        with arc1: st.write("**USD 평균**"); st.table(get_yr_analysis_v136(stats_df, 'usd').style.format(precision=2, thousands=","))
+        with arc2: st.write("**CNY 평균**"); st.table(get_yr_analysis_v136(stats_df, 'cny').style.format(precision=2, thousands=","))
     else: st.warning("데이터가 없습니다.")
