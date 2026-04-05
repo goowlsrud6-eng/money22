@@ -8,23 +8,25 @@ from datetime import datetime, timedelta
 import plotly.graph_objects as go
 
 # ==========================================
-# 1. 백업 및 데이터베이스 설정 (무삭제)
+# 1. 백업 및 데이터베이스 설정
 # ==========================================
 def run_backup():
+    """매일 첫 접속 시 데이터베이스 백업"""
     if not os.path.exists('backups'):
         os.makedirs('backups')
-    db_file = 'finance_final_v115.db'
+    db_file = 'finance_final_v116.db'
     today_str = datetime.now().strftime('%Y%m%d')
     backup_file = f"backups/backup_{today_str}.db"
     if os.path.exists(db_file) and not os.path.exists(backup_file):
         shutil.copy2(db_file, backup_file)
 
-st.set_page_config(page_title="자금 관리 시스템 v115", layout="wide", page_icon="💰")
+st.set_page_config(page_title="자금 관리 시스템 v116", layout="wide", page_icon="💰")
 run_backup()
 
 @st.cache_resource
 def get_db_connection():
-    conn = sqlite3.connect('finance_final_v115.db', check_same_thread=False)
+    """데이터베이스 연결 및 전체 테이블 스키마 100% 유지"""
+    conn = sqlite3.connect('finance_final_v116.db', check_same_thread=False)
     c = conn.cursor()
     c.execute('CREATE TABLE IF NOT EXISTS vendors (거래처명 TEXT PRIMARY KEY, 은행 TEXT, 계좌번호 TEXT, 예금주 TEXT, 기본유형 TEXT)')
     c.execute('''CREATE TABLE IF NOT EXISTS orders 
@@ -46,7 +48,7 @@ if 'order_up_key' not in st.session_state: st.session_state.order_up_key = 0
 if 'pay_up_key' not in st.session_state: st.session_state.pay_up_key = 1000
 
 # ==========================================
-# 2. 유틸리티 함수 (Fix 유지)
+# 2. 유틸리티 함수 (데이터 정제)
 # ==========================================
 def to_float(val):
     try:
@@ -67,7 +69,7 @@ def smart_date(date_str):
     except: return datetime.now().strftime("%Y-%m-%d")
 
 # ==========================================
-# 3. 데이터 처리 엔진 (무삭제)
+# 3. 데이터 처리 엔진
 # ==========================================
 def process_exchange_csv(file, currency_type):
     try:
@@ -87,7 +89,7 @@ def process_exchange_csv(file, currency_type):
     except Exception as e:
         st.error(f"환율 오류: {e}"); return False
 
-def process_ecount_v115(file):
+def process_ecount_v116(file):
     try:
         df = pd.read_excel(file, header=None)
         raw_oid = str(df.iloc[1, 0]).split(":")[-1].strip() if ":" in str(df.iloc[1,0]) else str(df.iloc[1, 0])
@@ -117,12 +119,14 @@ def process_ecount_v115(file):
 # ==========================================
 tabs = st.tabs(["📝 입금 입력", "📂 입금 엑셀 업로드", "📥 발주서 등록", "🔍 상세내역 및 정산", "⚙️ 거래처 관리", "📈 환율 관리"])
 
+# ------------------------------------------
 # [Tab 0] 입금 수기 입력
+# ------------------------------------------
 with tabs[0]:
     st.header("📝 입금 내역 수기 입력")
     v_data = pd.read_sql("SELECT * FROM vendors", conn)
     o_active = pd.read_sql("SELECT 발주번호 FROM orders WHERE 마감여부=0", conn)
-    with st.form("pay_manual_v115", clear_on_submit=True):
+    with st.form("pay_manual_v116", clear_on_submit=True):
         c1, c2 = st.columns(2)
         p_oid = c1.selectbox("🔗 발주번호 연동", ["없음"] + list(o_active['발주번호']))
         p_date = c2.date_input("입금일", value=datetime.now())
@@ -144,7 +148,9 @@ with tabs[0]:
                              (to_str(p_oid) if p_oid != "없음" else None, p_date.strftime("%Y-%m-%d"), p_ct, p_vn, p_pr, p_cur, p_dep, p_pre, p_memo, (p_dep+p_pre)*rate, vi['은행'], vi['계좌번호'], vi['예금주']))
                 conn.commit(); st.success("저장 완료!"); st.rerun()
 
-# [Tab 1] 입금 엑셀 업로드 (양식 포함)
+# ------------------------------------------
+# [Tab 1] 입금 엑셀 업로드
+# ------------------------------------------
 with tabs[1]:
     st.header("📂 통합 입금 엑셀 업로드")
     pay_tmp = pd.DataFrame(columns=["발주번호", "거래처", "유형", "상품명", "입금일", "실입금액", "선급금액", "송금사유"])
@@ -170,7 +176,9 @@ with tabs[1]:
             conn.commit(); st.success("일괄 저장 완료!"); st.session_state.pay_up_key += 1; st.rerun()
         except Exception as e: st.error(f"오류: {e}")
 
-# [Tab 2] 발주서 등록 및 마감 (수기 폼 복구)
+# ------------------------------------------
+# [Tab 2] 발주서 등록 및 마감
+# ------------------------------------------
 with tabs[2]:
     st.header("📥 발주서 등록 및 마감")
     c_o1, c_o2 = st.columns(2)
@@ -180,12 +188,12 @@ with tabs[2]:
         st.download_button(label="📥 수기용 발주 양식 다운로드", data=ord_tmp.to_csv(index=False).encode('utf-8-sig'), file_name='order_template.csv')
         of_list = st.file_uploader("발주서(xlsx) 선택", type=['xlsx'], accept_multiple_files=True, key=f"ord_{st.session_state.order_up_key}")
         if of_list and st.button("🚀 일괄 등록"):
-            for of in of_list: process_ecount_v115(of)
+            for of in of_list: process_ecount_v116(of)
             st.success("완료!"); st.session_state.order_up_key += 1; st.rerun()
     with c_o2:
         st.subheader("✍️ 수기 발주 등록")
         v_list = pd.read_sql("SELECT 거래처명 FROM vendors", conn)
-        with st.form("ord_manual_v115"):
+        with st.form("ord_manual_v116"):
             mi, m_step = st.text_input("발주번호"), st.text_input("발주차수")
             md, mv = st.date_input("발주일"), st.selectbox("거래처", ["선택"] + list(v_list['거래처명']))
             mp, mt = st.text_input("상품명"), st.number_input("금액", format="%.2f")
@@ -205,7 +213,9 @@ with tabs[2]:
                 conn.execute("UPDATE payments SET 거래처명=?, 유형=?, 상품명=?, 통화=? WHERE 발주번호=?", (r['거래처명'], r['유형'], r['상품명'], r['통화'], r['발주번호']))
             conn.commit(); st.success("동기화 완료!"); st.rerun()
 
-# [Tab 3] 상세내역 및 정산 (Fix 필터)
+# ------------------------------------------
+# [Tab 3] 상세내역 및 정산 (!!! 에러 유발 코드 원상 복구 부분 !!!)
+# ------------------------------------------
 with tabs[3]:
     st.header("🔍 상세 내역 및 정산")
     p_all = pd.read_sql("SELECT * FROM payments", conn); o_all = pd.read_sql("SELECT * FROM orders", conn)
@@ -221,8 +231,10 @@ with tabs[3]:
         
         if not fil_p.empty:
             cat_sum = fil_p.groupby('유형').agg({'실입금액':'sum', '선급금액':'sum'}).reset_index()
+            cat_sum['총합계'] = cat_sum['실입금액'] + cat_sum['선급금액']
             st.write(f"#### 📈 {y}년 {m if m != '전체' else ''} 요약")
-            st.table(cat_sum.style.format('{:,.2f}'))
+            # ★★★ v91 원본 복구: 숫자 컬럼만 명시적으로 포맷팅 (ValueError 해결) ★★★
+            st.table(cat_sum.style.format({'실입금액': '{:,.2f}', '선급금액': '{:,.2f}', '총합계': '{:,.2f}'}))
         
         st.divider(); st.subheader("📊 발주별 정산 현황")
         p_agg = p_all.groupby('발주번호').agg({'실입금액':'sum'}).reset_index()
@@ -236,13 +248,15 @@ with tabs[3]:
                 conn.execute("UPDATE payments SET 발주번호=?, 입금일=?, 유형=?, 거래처명=?, 상품명=?, 실입금액=?, 선급금액=?, 메모=? WHERE id=?", (r['발주번호'], r['입금일'], r['유형'], r['거래처명'], r['상품명'], r['실입금액'], r['선급금액'], r['메모'], r['id']))
             conn.commit(); st.success("수정 완료!"); st.rerun()
 
-# [Tab 4] 거래처 관리 (수기 폼 복구)
+# ------------------------------------------
+# [Tab 4] 거래처 관리
+# ------------------------------------------
 with tabs[4]:
     st.header("⚙️ 거래처 관리")
     cv1, cv2 = st.columns([1.2, 0.8])
     with cv1:
         st.subheader("➕ 신규 거래처 등록")
-        with st.form("vn_reg_v115", clear_on_submit=True):
+        with st.form("vn_reg_v116", clear_on_submit=True):
             vn = st.text_input("거래처명")
             vt = st.selectbox("유형", CATEGORIES)
             vc1, vc2, vc3 = st.columns(3)
@@ -274,7 +288,9 @@ with tabs[4]:
                 else: conn.execute("UPDATE vendors SET 은행=?, 계좌번호=?, 예금주=?, 기본유형=? WHERE 거래처명=?", (r['은행'], r['계좌번호'], r['예금주'], r['기본유형'], r['거래처명']))
             conn.commit(); st.rerun()
 
-# [Tab 5] 환율 관리 (월별 누락 해결 최종본)
+# ------------------------------------------
+# [Tab 5] 환율 관리
+# ------------------------------------------
 with tabs[5]:
     st.header("📈 환율 정밀 분석 (Investing.com 연동)")
     cu1, cu2 = st.columns(2)
@@ -293,24 +309,23 @@ with tabs[5]:
         ex_db['dt'] = pd.to_datetime(ex_db['날짜'])
         ex_db['ym'] = ex_db['dt'].dt.strftime('%Y-%m')
         
-        # 월별 평균 가공
+        # 월별 평균
         m_mean = ex_db.groupby('ym').agg({'usd': lambda x: x[x>0].mean(), 'cny': lambda x: x[x>0].mean()}).reset_index().fillna(0)
         m_mean['year'] = m_mean['ym'].str[:4].astype(int)
         m_mean['month'] = m_mean['ym'].str[5:].astype(int)
         
-        # 차트 표시
+        # 차트 (범위 고정)
         st.subheader("📉 월별 평균 환율 추이 (범위 고정)")
         cc1, cc2 = st.columns(2)
         with cc1:
             fig_u = go.Figure(); fig_u.add_trace(go.Scatter(x=m_mean['ym'], y=m_mean['usd'], mode='lines+markers', name='USD'))
-            fig_u.update_layout(yaxis=dict(range=[1360, 1540], dtick=20), height=350, template="plotly_white")
+            fig_u.update_layout(yaxis=dict(range=[1360, 1540], dtick=20), height=350, template="plotly_white", margin=dict(l=10,r=10,t=10,b=10))
             st.plotly_chart(fig_u, use_container_width=True)
         with cc2:
             fig_c = go.Figure(); fig_c.add_trace(go.Scatter(x=m_mean['ym'], y=m_mean['cny'], mode='lines+markers', name='CNY', line=dict(color='orange')))
-            fig_c.update_layout(yaxis=dict(range=[186, 226], dtick=2), height=350, template="plotly_white")
+            fig_c.update_layout(yaxis=dict(range=[186, 226], dtick=2), height=350, template="plotly_white", margin=dict(l=10,r=10,t=10,b=10))
             st.plotly_chart(fig_c, use_container_width=True)
 
-        # [리포트 핵심 수정 부분]
         def get_all_months_report(df, col):
             years_list = sorted(df['year'].unique(), reverse=True)
             if not years_list: return pd.DataFrame()
@@ -318,10 +333,8 @@ with tabs[5]:
             curr_y = years_list[0]
             prev_y = years_list[1] if len(years_list) > 1 else None
             
-            # ★ 수정 포인트: 현재 연도의 데이터가 있는 달만이 아니라, 전체 1-12월을 뼈대로 잡음
             res = pd.DataFrame({'월': range(1, 13)})
             
-            # 해당 연도 매핑
             c_data = df[df['year'] == curr_y].set_index('month')[col]
             res[f'{curr_y}년 평균'] = res['월'].map(c_data)
             
@@ -329,7 +342,6 @@ with tabs[5]:
                 p_data = df[df['year'] == prev_y].set_index('month')[col]
                 res[f'{prev_y}년 평균'] = res['월'].map(p_data)
                 
-                # YoY 계산
                 def calc_yoy(row):
                     cy, py = row[f'{curr_y}년 평균'], row[f'{prev_y}년 평균']
                     if pd.notnull(cy) and pd.notnull(py) and py > 0:
@@ -339,7 +351,6 @@ with tabs[5]:
                     return "-"
                 res['전년비(YoY)'] = res.apply(calc_yoy, axis=1)
             
-            # MoM 계산 (전체 시계열 이용)
             df_sorted = df.sort_values('ym').copy()
             df_sorted['diff'] = df_sorted[col].diff()
             df_sorted['prev'] = df_sorted[col].shift(1)
@@ -356,7 +367,6 @@ with tabs[5]:
                 return "-"
             res['전월비(MoM)'] = res.apply(calc_mom, axis=1)
             
-            # 데이터가 단 하나라도 있는 행만 출력 (2025년만 있는 달도 포함됨)
             return res[res[f'{curr_y}년 평균'].notnull() | res[f'{prev_y}년 평균'].notnull() if prev_y else res[f'{curr_y}년 평균'].notnull()]
 
         st.divider(); st.subheader("📅 연도별 병렬 분석 리포트 (YoY & MoM)")
