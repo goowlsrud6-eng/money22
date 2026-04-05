@@ -12,39 +12,31 @@ import urllib.request
 # 1. 백업 및 데이터베이스 초기화
 # ==========================================
 def run_backup():
-    """안정적인 운영을 위해 매일 첫 접속 시 DB 백업 생성"""
     if not os.path.exists('backups'):
         os.makedirs('backups')
-    db_file = 'finance_final_v124.db'
+    db_file = 'finance_final_v125.db'
     today_str = datetime.now().strftime('%Y%m%d')
     backup_file = f"backups/backup_{today_str}.db"
     if os.path.exists(db_file) and not os.path.exists(backup_file):
         shutil.copy2(db_file, backup_file)
 
-st.set_page_config(page_title="자금 관리 시스템 v124", layout="wide", page_icon="💰")
+st.set_page_config(page_title="자금 관리 시스템", layout="wide")
 run_backup()
 
 @st.cache_resource
 def get_db_connection():
-    """모든 테이블 스키마 정의"""
-    conn = sqlite3.connect('finance_final_v124.db', check_same_thread=False)
+    conn = sqlite3.connect('finance_final_v125.db', check_same_thread=False)
     c = conn.cursor()
-    # [1] 거래처 마스터
-    c.execute('''CREATE TABLE IF NOT EXISTS vendors 
-                 (거래처명 TEXT PRIMARY KEY, 은행 TEXT, 계좌번호 TEXT, 예금주 TEXT, 기본유형 TEXT)''')
-    # [2] 발주 마스터
+    c.execute('CREATE TABLE IF NOT EXISTS vendors (거래처명 TEXT PRIMARY KEY, 은행 TEXT, 계좌번호 TEXT, 예금주 TEXT, 기본유형 TEXT)')
     c.execute('''CREATE TABLE IF NOT EXISTS orders 
                  (발주번호 TEXT PRIMARY KEY, 발주일 TEXT, 발주차수 TEXT, 거래처명 TEXT, 
                   상품명 TEXT, 유형 TEXT, 통화 TEXT, 발주총액 REAL, 마감여부 INTEGER DEFAULT 0)''')
-    # [3] 입금 상세
     c.execute('''CREATE TABLE IF NOT EXISTS payments 
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, 발주번호 TEXT, 입금일 TEXT, 
                   유형 TEXT, 거래처명 TEXT, 상품명 TEXT, 통화 TEXT,
                   실입금액 REAL, 선급금액 REAL, 메모 TEXT, 한화환산액 REAL,
                   은행 TEXT, 계좌번호 TEXT, 예금주 TEXT)''')
-    # [4] 환율 관리
-    c.execute('''CREATE TABLE IF NOT EXISTS exchange_rates 
-                 (날짜 TEXT PRIMARY KEY, usd REAL, cny REAL)''')
+    c.execute('CREATE TABLE IF NOT EXISTS exchange_rates (날짜 TEXT PRIMARY KEY, usd REAL, cny REAL)')
     conn.commit()
     return conn
 
@@ -69,7 +61,6 @@ def to_str(val):
     return "" if s.lower() in ["nan", "none", ""] else s
 
 def smart_date(date_str):
-    """날짜 형식 통일 (빈 값일 경우 오늘 날짜)"""
     try:
         if pd.isna(date_str) or str(date_str).strip() == "": 
             return datetime.now().strftime("%Y-%m-%d")
@@ -79,7 +70,6 @@ def smart_date(date_str):
 
 @st.cache_data(ttl=3600)
 def get_realtime_rate(currency):
-    """네이버 금융 실시간 환율 크롤링"""
     try:
         url = f"https://finance.naver.com/marketindex/exchangeDetail.naver?marketindexCd=FX_{currency}KRW"
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
@@ -111,8 +101,7 @@ def process_exchange_csv(file, currency_type):
     except Exception as e:
         st.error(f"환율 파일 처리 오류: {e}"); return False
 
-def process_ecount_v124(file):
-    """발주서 분석기 (Syntax Error 방지를 위해 메시지 포맷팅 안전화)"""
+def process_ecount_v125(file):
     try:
         df = pd.read_excel(file, header=None)
         raw_oid = str(df.iloc[1, 0]).split(":")[-1].strip() if ":" in str(df.iloc[1,0]) else str(df.iloc[1, 0])
@@ -129,7 +118,6 @@ def process_ecount_v124(file):
         match = v_master[v_master['clean'] == re.sub(r'\s+', '', vendor_raw)]
         
         if match.empty: 
-            # ★ 이모지 충돌 에러 완전 방지
             err_msg = "미등록 업체입니다: [" + vendor_raw + "]"
             return False, err_msg
             
@@ -151,18 +139,19 @@ def process_ecount_v124(file):
 # ==========================================
 # 4. 메인 UI 
 # ==========================================
-tabs = st.tabs(["📝 입금 입력", "📂 입금 엑셀 업로드", "📥 발주서 등록", "🔍 상세내역 및 정산", ⚙️ 거래처 관리", "📈 환율 관리"])
+# 이모지 제거하여 Syntax Error 완전 방지
+tabs = st.tabs(["입금 입력", "입금 엑셀 업로드", "발주서 등록", "상세내역 및 정산", "거래처 관리", "환율 관리"])
 
 # ------------------------------------------
 # [Tab 0] 입금 수기 입력
 # ------------------------------------------
 with tabs[0]:
-    st.header("📝 입금 내역 수기 입력")
+    st.header("입금 내역 수기 입력")
     v_data = pd.read_sql("SELECT * FROM vendors", conn)
     o_active = pd.read_sql("SELECT 발주번호 FROM orders WHERE 마감여부=0", conn)
-    with st.form("pay_manual_v124", clear_on_submit=True):
+    with st.form("pay_manual_v125", clear_on_submit=True):
         c1, c2 = st.columns(2)
-        p_oid = c1.selectbox("🔗 발주번호 연동", ["없음"] + list(o_active['발주번호']))
+        p_oid = c1.selectbox("발주번호 연동", ["없음"] + list(o_active['발주번호']))
         p_date = c2.date_input("입금일", value=datetime.now())
         
         c3, c4, c5 = st.columns(3)
@@ -177,7 +166,7 @@ with tabs[0]:
         
         p_memo = st.text_input("메모(송금사유)")
         
-        if st.form_submit_button("✅ 입금 내역 저장"):
+        if st.form_submit_button("입금 내역 저장"):
             if p_vn == "선택":
                 st.error("거래처를 선택하세요.")
             else:
@@ -192,12 +181,12 @@ with tabs[0]:
 # [Tab 1] 입금 엑셀 업로드
 # ------------------------------------------
 with tabs[1]:
-    st.header("📂 통합 입금 엑셀 업로드")
+    st.header("통합 입금 엑셀 업로드")
     pay_tmp = pd.DataFrame(columns=["발주번호", "거래처", "유형", "상품명", "입금일", "실입금액", "선급금액", "송금사유"])
-    st.download_button(label="📥 입금 업로드 양식 다운로드", data=pay_tmp.to_csv(index=False).encode('utf-8-sig'), file_name='payment_template.csv')
+    st.download_button(label="입금 업로드 양식 다운로드", data=pay_tmp.to_csv(index=False).encode('utf-8-sig'), file_name='payment_template.csv')
     
     f_p = st.file_uploader("입금 CSV 선택", type=['csv'], key=f"pay_up_{st.session_state.pay_up_key}")
-    if f_p and st.button("🚀 데이터 일괄 저장"):
+    if f_p and st.button("데이터 일괄 저장"):
         try:
             df_p = pd.read_csv(f_p)
             df_p.columns = [str(c).strip().replace('\ufeff', '') for c in df_p.columns]
@@ -231,33 +220,33 @@ with tabs[1]:
 # [Tab 2] 발주서 등록 및 마감
 # ------------------------------------------
 with tabs[2]:
-    st.header("📥 발주서 등록 및 마감")
+    st.header("발주서 등록 및 마감")
     c_o1, c_o2 = st.columns(2)
     with c_o1:
-        st.subheader("⚡ 엑셀 일괄 등록")
+        st.subheader("엑셀 일괄 등록")
         ord_tmp = pd.DataFrame(columns=["발주번호", "발주일", "발주차수", "거래처명", "상품명", "금액", "통화"])
-        st.download_button(label="📥 수기용 발주 양식 다운로드", data=ord_tmp.to_csv(index=False).encode('utf-8-sig'), file_name='order_template.csv')
+        st.download_button(label="수기용 발주 양식 다운로드", data=ord_tmp.to_csv(index=False).encode('utf-8-sig'), file_name='order_template.csv')
         of_list = st.file_uploader("발주서(xlsx) 선택", type=['xlsx'], accept_multiple_files=True, key=f"ord_{st.session_state.order_up_key}")
         
-        if of_list and st.button("🚀 일괄 등록 실행"):
+        if of_list and st.button("일괄 등록 실행"):
             success_cnt = 0
             error_messages = []
             for of in of_list: 
-                is_success, err_msg = process_ecount_v124(of)
+                is_success, err_msg = process_ecount_v125(of)
                 if is_success:
                     success_cnt += 1
                 else:
-                    error_messages.append(f"[{of.name} 파일] ⚠️ {err_msg}")
+                    error_messages.append(f"[{of.name} 파일] {err_msg}")
             
             for em in error_messages: st.warning(em)
             if success_cnt > 0:
-                st.success(f"✅ 총 {success_cnt}건 발주서 등록 성공!")
+                st.success(f"총 {success_cnt}건 발주서 등록 성공!")
                 if not error_messages: st.session_state.order_up_key += 1; st.rerun()
 
     with c_o2:
-        st.subheader("✍️ 수기 발주 등록")
+        st.subheader("수기 발주 등록")
         v_list = pd.read_sql("SELECT 거래처명 FROM vendors", conn)
-        with st.form("ord_manual_v124"):
+        with st.form("ord_manual_v125"):
             mi = st.text_input("발주번호")
             m_step = st.text_input("발주차수")
             md = st.date_input("발주일")
@@ -266,7 +255,7 @@ with tabs[2]:
             mt = st.number_input("금액", format="%.2f")
             m_cur = st.selectbox("통화", ["한화", "USD", "CNY"])
             
-            if st.form_submit_button("✅ 수기 저장"):
+            if st.form_submit_button("수기 저장"):
                 if mi and mv != "선택":
                     vt_res = pd.read_sql(f"SELECT 기본유형 FROM vendors WHERE 거래처명='{mv}'", conn)
                     vt = vt_res.iloc[0]['기본유형'] if not vt_res.empty else "사입"
@@ -279,13 +268,13 @@ with tabs[2]:
     st.divider()
     o_data = pd.read_sql("SELECT * FROM orders", conn)
     if not o_data.empty:
-        st.subheader("📄 발주 리스트 및 마감 관리")
+        st.subheader("발주 리스트 및 마감 관리")
         show_closed = st.checkbox("마감된 발주 포함해서 보기", value=False)
         disp_o = o_data if show_closed else o_data[o_data['마감여부'] == 0]
         
         ev_o = st.data_editor(disp_o.sort_values('발주일', ascending=False), hide_index=True, use_container_width=True, disabled=["발주번호"], column_config={"마감여부": st.column_config.CheckboxColumn("마감")})
         
-        if st.button("💾 정보 업데이트 및 모든 상세내역 소급 적용"):
+        if st.button("정보 업데이트 및 모든 상세내역 소급 적용"):
             for _, r in ev_o.iterrows():
                 conn.execute("UPDATE orders SET 발주일=?, 발주차수=?, 거래처명=?, 상품명=?, 유형=?, 통화=?, 발주총액=?, 마감여부=? WHERE 발주번호=?", 
                              (r['발주일'], r['발주차수'], r['거래처명'], r['상품명'], r['유형'], r['통화'], r['발주총액'], int(r['마감여부']), r['발주번호']))
@@ -299,13 +288,13 @@ with tabs[2]:
 # [Tab 3] 상세내역 및 통합 정산
 # ------------------------------------------
 with tabs[3]:
-    st.header("🔍 상세 내역 및 통합 정산")
+    st.header("상세 내역 및 통합 정산")
     p_all = pd.read_sql("SELECT * FROM payments", conn)
     o_all = pd.read_sql("SELECT * FROM orders", conn)
     
     if not p_all.empty:
         p_all['dt'] = pd.to_datetime(p_all['입금일'])
-        st.subheader("📊 필터 및 검색")
+        st.subheader("필터 및 검색")
         f1, f2, f3 = st.columns([1, 1, 2])
         y = f1.selectbox("기준 연도", sorted(p_all['dt'].dt.year.unique(), reverse=True))
         m = f2.selectbox("기준 월", ["전체"] + sorted(list(p_all[p_all['dt'].dt.year==y]['dt'].dt.month.unique())))
@@ -318,27 +307,27 @@ with tabs[3]:
         if not fil_p.empty:
             cat_sum = fil_p.groupby('유형').agg({'실입금액':'sum', '선급금액':'sum'}).reset_index()
             cat_sum['총합계'] = cat_sum['실입금액'] + cat_sum['선급금액']
-            st.write(f"#### 📈 {y}년 {m if m != '전체' else ''} 유형별 요약")
+            st.write(f"#### {y}년 {m if m != '전체' else ''} 유형별 요약")
             st.table(cat_sum.style.format({'실입금액': '{:,.2f}', '선급금액': '{:,.2f}', '총합계': '{:,.2f}'}))
         
         st.divider()
-        st.subheader("📊 발주번호별 정산 및 미수금 현황")
+        st.subheader("발주번호별 정산 및 미수금 현황")
         p_agg = p_all.groupby('발주번호').agg({'실입금액':'sum'}).reset_index()
         sum_df = pd.merge(o_all, p_agg, on='발주번호', how='left').fillna(0)
         sum_df['잔액'] = sum_df['발주총액'] - sum_df['실입금액']
         
-        sum_df['상태'] = sum_df['마감여부'].apply(lambda x: "✅ 마감완료" if x == 1 else "⏳ 진행중")
+        sum_df['상태'] = sum_df['마감여부'].apply(lambda x: "마감완료" if x == 1 else "진행중")
         
         def highlight_closed(row):
-            if row['상태'] == '✅ 마감완료':
+            if row['상태'] == '마감완료':
                 return ['background-color: #f0f2f6; color: #a0aab2'] * len(row)
             return [''] * len(row)
             
-        disp_sum = sum_df[['발주번호', '발주차수', '상태', '거래처명', '상품명', '발주총액', '실입금액', '잔액', '통화']].sort_values('상태', ascending=False)
+        disp_sum = sum_df[['발주번호', '발주차수', '상태', '거래처명', '상품명', '발주총액', '실입금액', '잔액', '통화']].sort_values('상태', ascending=True)
         st.dataframe(disp_sum.style.apply(highlight_closed, axis=1).format({'발주총액': '{:,.2f}', '실입금액': '{:,.2f}', '잔액': '{:,.2f}'}), use_container_width=True, hide_index=True)
 
         st.divider()
-        st.subheader("📑 상세 리스트 편집 및 삭제")
+        st.subheader("상세 리스트 편집 및 삭제")
         
         ex_db = pd.read_sql("SELECT * FROM exchange_rates", conn)
         ex_db['ym'] = pd.to_datetime(ex_db['날짜']).dt.strftime('%Y-%m')
@@ -380,7 +369,7 @@ with tabs[3]:
         
         eb1, eb2 = st.columns([1, 4])
         with eb1:
-            if st.button("💾 상세 수정 저장"):
+            if st.button("상세 수정 저장"):
                 for _, r in ed_p.iterrows():
                     conn.execute("UPDATE payments SET 발주번호=?, 입금일=?, 유형=?, 거래처명=?, 상품명=?, 실입금액=?, 선급금액=?, 메모=? WHERE id=?", 
                                  (r['발주번호'], r['입금일'], r['유형'], r['거래처명'], r['상품명'], r['실입금액'], r['선급금액'], r['메모'], r['id']))
@@ -388,17 +377,17 @@ with tabs[3]:
                 st.success("저장 완료!")
                 st.rerun()
         with eb2:
-            with st.form("delete_form_v124", clear_on_submit=True):
+            with st.form("delete_form_v125", clear_on_submit=True):
                 col_d1, col_d2 = st.columns([2, 1])
                 del_id = col_d1.number_input("삭제할 ID 번호 입력", min_value=0, step=1)
-                if col_d2.form_submit_button("🗑️ 해당 ID 삭제"):
+                if col_d2.form_submit_button("해당 ID 삭제"):
                     conn.execute(f"DELETE FROM payments WHERE id={del_id}")
                     conn.commit()
                     st.success("삭제 완료!")
                     st.rerun()
 
         st.divider()
-        st.markdown(f"### 💰 현재 검색 목록 총 합계 ({len(fil_p_merged)}건)")
+        st.markdown(f"### 현재 검색 목록 총 합계 ({len(fil_p_merged)}건)")
         
         tot_krw_all = fil_p_merged['예상환산액(KRW)'].sum()
         tot_krw = fil_p_merged[fil_p_merged['통화']=='한화']['실입금액'].sum() + fil_p_merged[fil_p_merged['통화']=='한화']['선급금액'].sum()
@@ -415,29 +404,29 @@ with tabs[3]:
 # [Tab 4] 거래처 관리
 # ------------------------------------------
 with tabs[4]:
-    st.header("⚙️ 거래처 관리")
+    st.header("거래처 관리")
     cv1, cv2 = st.columns([1.2, 0.8])
     with cv1:
-        st.subheader("➕ 신규 거래처 수기 등록")
-        with st.form("vn_reg_v124", clear_on_submit=True):
+        st.subheader("신규 거래처 수기 등록")
+        with st.form("vn_reg_v125", clear_on_submit=True):
             vn = st.text_input("거래처명")
             vt = st.selectbox("유형", CATEGORIES)
             vc1, vc2, vc3 = st.columns(3)
             vb = vc1.text_input("은행")
             va = vc2.text_input("계좌번호")
             vh = vc3.text_input("예금주")
-            if st.form_submit_button("✅ 저장"):
+            if st.form_submit_button("저장"):
                 if vn: 
                     conn.execute("INSERT OR REPLACE INTO vendors VALUES (?,?,?,?,?)", (vn,vb,va,vh,vt))
                     conn.commit()
                     st.success("등록 완료!")
                     st.rerun()
     with cv2:
-        st.subheader("📂 일괄 업로드")
+        st.subheader("일괄 업로드")
         v_tmp = pd.DataFrame(columns=["거래처명", "은행", "계좌번호", "예금주", "기본유형"])
-        st.download_button(label="📥 거래처 양식 다운로드", data=v_tmp.to_csv(index=False).encode('utf-8-sig'), file_name='vendor_template.csv')
+        st.download_button(label="거래처 양식 다운로드", data=v_tmp.to_csv(index=False).encode('utf-8-sig'), file_name='vendor_template.csv')
         vf = st.file_uploader("거래처 CSV", type=['csv'])
-        if vf and st.button("🚀 업로드 실행"):
+        if vf and st.button("업로드 실행"):
             v_up = pd.read_csv(vf)
             for _, r in v_up.iterrows(): 
                 conn.execute("INSERT OR REPLACE INTO vendors VALUES (?,?,?,?,?)", 
@@ -449,10 +438,10 @@ with tabs[4]:
     st.divider()
     v_data = pd.read_sql("SELECT * FROM vendors", conn)
     if not v_data.empty:
-        st.subheader("🏢 거래처 정보 관리 및 소급 적용")
+        st.subheader("거래처 정보 관리 및 소급 적용")
         orig_v = v_data['거래처명'].tolist()
         ev_v = st.data_editor(v_data, hide_index=True, use_container_width=True)
-        if st.button("💾 거래처 동기화 저장"):
+        if st.button("거래처 동기화 저장"):
             for idx, r in ev_v.iterrows():
                 old_n, new_n = orig_v[idx], r['거래처명']
                 if old_n != new_n:
@@ -471,18 +460,18 @@ with tabs[4]:
 # [Tab 5] 환율 관리
 # ------------------------------------------
 with tabs[5]:
-    st.header("📈 환율 정밀 분석 (Investing.com 연동)")
+    st.header("환율 정밀 분석 (Investing.com 연동)")
     
     cu1, cu2 = st.columns(2)
     with cu1:
         f_usd = st.file_uploader("USD/KRW CSV 업로드", type=['csv'], key="usd_up")
-        if f_usd and st.button("📥 USD 환율 업데이트"):
+        if f_usd and st.button("USD 환율 업데이트"):
             if process_exchange_csv(f_usd, "USD"): 
                 st.success("USD 데이터 반영 완료")
                 st.rerun()
     with cu2:
         f_cny = st.file_uploader("CNY/KRW CSV 업로드", type=['csv'], key="cny_up")
-        if f_cny and st.button("📥 CNY 환율 업데이트"):
+        if f_cny and st.button("CNY 환율 업데이트"):
             if process_exchange_csv(f_cny, "CNY"): 
                 st.success("CNY 데이터 반영 완료")
                 st.rerun()
@@ -502,7 +491,7 @@ with tabs[5]:
         m_mean['year'] = m_mean['ym'].str[:4].astype(int)
         m_mean['month'] = m_mean['ym'].str[5:].astype(int)
         
-        st.subheader("📉 월별 평균 환율 추이 (범위 고정)")
+        st.subheader("월별 평균 환율 추이 (범위 고정)")
         cc1, cc2 = st.columns(2)
         with cc1:
             st.write("**[USD] 1360~1540 (20단위)**")
@@ -564,15 +553,15 @@ with tabs[5]:
             return res[res[f'{curr_y}년 평균'].notnull() | (res[f'{prev_y}년 평균'].notnull() if prev_y else False)].reset_index(drop=True)
 
         st.divider()
-        st.subheader("📅 연도별 병렬 분석 리포트 (YoY & MoM 통합)")
+        st.subheader("연도별 병렬 분석 리포트 (YoY & MoM 통합)")
         rc1, rc2 = st.columns(2)
         with rc1:
-            st.write("#### 💵 USD 환율 분석")
+            st.write("#### USD 환율 분석")
             u_res = get_all_months_report(m_mean, 'usd')
             if not u_res.empty: 
                 st.table(u_res.style.format({'월':'{:.0f}월'}, na_rep="-"))
         with rc2:
-            st.write("#### 💴 CNY 환율 분석")
+            st.write("#### CNY 환율 분석")
             c_res = get_all_months_report(m_mean, 'cny')
             if not c_res.empty: 
                 st.table(c_res.style.format({'월':'{:.0f}월'}, na_rep="-"))
