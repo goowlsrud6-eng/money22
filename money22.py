@@ -88,22 +88,39 @@ def to_str(val):
     return s
 
 def smart_date(date_val):
-    """[수정 1] 3/14 같은 형식을 YYYY-03-14로 변환하는 로직 추가"""
+    """
+    다양한 날짜 형식 인식:
+    - 2026-03-18, 2026.03.18, 2026/03/18 (표준)
+    - 3/18, 03/18, 3-18 (연도 생략 시 현재 연도 부여)
+    - 3월 18일, 3월18일 (한글 형식)
+    """
     try:
         if pd.isna(date_val) or str(date_val).strip() == "":
             return datetime.now().strftime("%Y-%m-%d")
+        
+        # 날짜 데이터가 이미 datetime 객체인 경우
         if isinstance(date_val, (datetime, pd.Timestamp)):
             return date_val.strftime("%Y-%m-%d")
         
         ds = str(date_val).strip()
-        # "3/14" 또는 "03/14" 형식 감지
-        if re.match(r'^\d{1,2}/\d{1,2}$', ds) or re.match(r'^\d{1,2}-\d{1,2}$', ds):
-            curr_year = datetime.now().year
+        curr_year = datetime.now().year
+
+        # 1. 한글 형식 처리 (예: 3월 18일 -> 3-18)
+        ds = re.sub(r'(\d{1,2})월\s*(\d{1,2})일', r'\1-\2', ds)
+        
+        # 2. 연도 생략 형식 처리 (예: 3/18, 3-18 -> 2026-3-18)
+        # 숫자/숫자 또는 숫자-숫자 형태인데 전체 길이가 짧은 경우
+        if re.match(r'^\d{1,2}[/-]\d{1,2}$', ds):
             ds = f"{curr_year}-{ds.replace('/', '-')}"
-            
-        ds = ds.rstrip('.').replace(" ", "").replace(".", "-").replace("/", "-")
+        
+        # 3. 마침표 형식을 하이픈으로 변경 (예: 2026.03.18 -> 2026-03-18)
+        ds = ds.replace(".", "-").replace("/", "-").replace(" ", "")
+        
+        # 4. Pandas의 to_datetime을 이용해 최종 변환
         return pd.to_datetime(ds).strftime("%Y-%m-%d")
-    except:
+        
+    except Exception:
+        # 분석 실패 시 오늘 날짜 반환 (또는 에러 로그)
         return datetime.now().strftime("%Y-%m-%d")
 
 # ==============================================================================
