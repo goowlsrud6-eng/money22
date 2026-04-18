@@ -46,10 +46,9 @@ if 'order_up_key' not in st.session_state: st.session_state.order_up_key = 0
 if 'pay_up_key' not in st.session_state: st.session_state.pay_up_key = 1000
 
 # ==============================================================================
-# 2. 유틸리티 함수 (날짜 인식 및 ID 재사용 로직 추가)
+# 2. 유틸리티 함수
 # ==============================================================================
 def get_next_available_id():
-    """삭제되어 비어있는 ID 중 가장 작은 번호를 찾고, 없으면 다음 번호를 반환"""
     ids = pd.read_sql("SELECT id FROM payments", conn)['id'].tolist()
     if not ids: return 1
     ids.sort()
@@ -69,19 +68,15 @@ def to_str(val):
     return "" if s.lower() in ["nan", "none", ""] else s
 
 def smart_date(date_val):
-    """3/14 같은 형식을 2026-03-14로 변환하는 로직 보강"""
     try:
         if pd.isna(date_val) or str(date_val).strip() == "":
             return datetime.now().strftime("%Y-%m-%d")
         if isinstance(date_val, (datetime, pd.Timestamp)):
             return date_val.strftime("%Y-%m-%d")
-        
         ds = str(date_val).strip()
-        # "3/14" 또는 "03/14" 형식인 경우 현재 연도 자동 삽입
         if re.match(r'^\d{1,2}/\d{1,2}$', ds) or re.match(r'^\d{1,2}-\d{1,2}$', ds):
             curr_year = datetime.now().year
             ds = f"{curr_year}-{ds.replace('/', '-')}"
-        
         ds = ds.rstrip('.').replace(" ", "").replace(".", "-").replace("/", "-")
         return pd.to_datetime(ds).strftime("%Y-%m-%d")
     except:
@@ -135,7 +130,6 @@ def process_ecount_v136(file):
 # ==============================================================================
 tabs = st.tabs(["입금 등록", "발주서 등록", "상세내역 및 정산", "거래처 관리", "환율 분석"])
 
-# --- [Tab 0] 입금 내역 등록 (상품명 자동 연동 로직 추가) ---
 with tabs[0]:
     st.header("입금 내역 등록 및 관리")
     v_data_t0 = pd.read_sql("SELECT * FROM vendors", conn)
@@ -148,39 +142,31 @@ with tabs[0]:
             r1c1, r1c2 = st.columns(2)
             p_oid = r1c1.selectbox("발주번호 연동", ["없음"] + list(o_active_t0['발주번호']))
             p_date = r1c2.date_input("입금일자", value=datetime.now())
-            
-            # 발주번호 선택 시 상품명 미리 가져오기
             auto_prod = ""
             if p_oid != "없음":
                 auto_prod = o_active_t0[o_active_t0['발주번호'] == p_oid]['상품명'].values[0]
-            
             r2c1, r2c2, r2c3 = st.columns(3)
             p_vn = r2c1.selectbox("거래처 선택", ["선택"] + list(v_data_t0['거래처명']))
             p_ct = r2c2.selectbox("유형 분류", CATEGORIES)
-            p_pr = r2c3.text_input("상품명(발주번호 선택시 자동연동)", value=auto_prod)
-            
+            p_pr = r2c3.text_input("상품명(발주 연동)", value=auto_prod)
             r3c1, r3c2, r3c3 = st.columns(3)
             p_dep = r3c1.number_input("실입금액", format="%.2f")
             p_pre = r3c2.number_input("선급금액", format="%.2f")
             p_cur = r3c3.selectbox("거래통화", ["한화", "USD", "CNY"])
             p_memo = st.text_input("메모")
-            
             if st.form_submit_button("입금 내역 저장"):
-                if p_vn == "선택": st.error("거래처를 선택하세요.")
+                if p_vn == "선택": st.error("거래처 선택 필수")
                 else:
                     new_id = get_next_available_id()
                     vi = v_data_t0[v_data_t0['거래처명']==p_vn].iloc[0]
-                    # 상품명이 비어있고 발주번호가 있으면 자동 연동 상품명 사용
-                    final_prod = p_pr if p_pr else auto_prod
                     conn.execute('''INSERT INTO payments (id, 발주번호, 입금일, 유형, 거래처명, 상품명, 통화, 실입금액, 선급금액, 메모, 한화환산액, 은행, 계좌번호, 예금주) 
-                                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)''', 
-                                 (new_id, to_str(p_oid) if p_oid != "없음" else None, p_date.strftime("%Y-%m-%d"), p_ct, p_vn, final_prod, p_cur, p_dep, p_pre, p_memo, 0.0, vi['은행'], vi['계좌번호'], vi['예금주']))
-                    conn.commit(); st.success(f"ID {new_id}번으로 저장되었습니다."); st.rerun()
+                                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)''', (new_id, to_str(p_oid) if p_oid != "없음" else None, p_date.strftime("%Y-%m-%d"), p_ct, p_vn, p_pr, p_cur, p_dep, p_pre, p_memo, 0.0, vi['은행'], vi['계좌번호'], vi['예금주']))
+                    conn.commit(); st.rerun()
 
     with col_excel:
         st.subheader("2. 엑셀 일괄 업로드")
         csv_tmp = pd.DataFrame(columns=["발주번호", "거래처", "유형", "상품명", "입금일", "실입금액", "선급금액", "송금사유"])
-        st.download_button("양식 다운로드", csv_template.to_csv(index=False).encode('utf-8-sig'), "pay_template.csv")
+        st.download_button("양식 다운로드", csv_tmp.to_csv(index=False).encode('utf-8-sig'), "pay_template.csv")
         f_csv = st.file_uploader("CSV 선택", type=['csv'], key=f"pay_up_{st.session_state.pay_up_key}")
         if f_csv and st.button("데이터 일괄 저장"):
             try:
@@ -188,7 +174,7 @@ with tabs[0]:
                 o_all_map = pd.read_sql("SELECT 발주번호, 상품명, 거래처명, 유형, 통화 FROM orders", conn)
                 for _, r in df_p.iterrows():
                     oid = to_str(r.get('발주번호'))
-                    pd_s = smart_date(r.get('입금일')) # 날짜 인식 강화 적용
+                    pd_s = smart_date(r.get('입금일'))
                     if oid and not o_all_map[o_all_map['발주번호'] == oid].empty:
                         info = o_all_map[o_all_map['발주번호'] == oid].iloc[0]
                         vn, pc, pp, cur = info['거래처명'], info['유형'], info['상품명'], info['통화']
@@ -198,11 +184,10 @@ with tabs[0]:
                     new_id = get_next_available_id()
                     conn.execute('''INSERT INTO payments (id, 발주번호, 입금일, 유형, 거래처명, 상품명, 통화, 실입금액, 선급금액, 메모, 한화환산액, 은행, 계좌번호, 예금주) 
                                     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)''', (new_id, oid if oid else None, pd_s, pc, vn, pp, cur, to_float(r.get('실입금액')), to_float(r.get('선급금액')), to_str(r.get('송금사유')), 0.0, b_b, b_a, b_h))
-                    conn.commit() # ID 채우기를 위해 매번 커밋
+                    conn.commit()
                 st.session_state.pay_up_key += 1; st.rerun()
             except Exception as e: st.error(f"오류: {e}")
 
-# --- [Tab 1] 발주서 등록 및 마감 ---
 with tabs[1]:
     st.header("발주서 등록 및 마감")
     c1, c2 = st.columns([1, 1.5])
