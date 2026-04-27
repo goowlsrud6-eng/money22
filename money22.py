@@ -394,11 +394,11 @@ with tabs[3]:
     else:
         st.info("등록된 거래처가 없습니다.")
 
-# --- [Tab 4] 환율 분석 (전년/전월 대비 '표' 형식 분석 로직) ---
+# --- [Tab 4] 환율 분석 (사용자 지정 순서: 월별 기준 연도 대조표) ---
 with tabs[4]:
     st.header("📈 환율 데이터 분석 및 관리")
     
-    # 1. 환율 데이터 업로드 섹션
+    # 1. 환율 데이터 업로드 (원본 로직 유지)
     def up_ex(u, cur):
         try:
             df_ex = pd.read_csv(u)
@@ -411,85 +411,68 @@ with tabs[4]:
                 })
             upsert_supabase_data("exchange_rates", data_list)
         except Exception as e:
-            st.error(f"데이터 업로드 중 오류 발생: {e}")
+            st.error(f"업로드 에러: {e}")
 
     up1, up2 = st.columns(2)
     with up1:
-        u_u = st.file_uploader("USD 환율 CSV", type=['csv'], key="usd_up")
-        if u_u and st.button("USD 데이터 동기화"):
-            up_ex(u_u, "USD"); st.success("USD 업데이트 완료"); st.rerun()
+        u_u = st.file_uploader("USD CSV", type=['csv'], key="usd_up")
+        if u_u and st.button("USD 동기화"):
+            up_ex(u_u, "USD"); st.rerun()
     with up2:
-        u_c = st.file_uploader("CNY 환율 CSV", type=['csv'], key="cny_up")
-        if u_c and st.button("CNY 데이터 동기화"):
-            up_ex(u_c, "CNY"); st.success("CNY 업데이트 완료"); st.rerun()
+        u_c = st.file_uploader("CNY CSV", type=['csv'], key="cny_up")
+        if u_c and st.button("CNY 동기화"):
+            up_ex(u_c, "CNY"); st.rerun()
 
     st.divider()
 
-    # 2. 전년/전월 대비 '표' 형식 분석 (사용자 요청 반영)
+    # 2. 사용자 요청 순서: 월별 행(Row) + 연도별 열(Column) 비교표
     ex_db = get_supabase_data("exchange_rates")
     
     if not ex_db.empty:
         ex_db['날짜'] = pd.to_datetime(ex_db['날짜'])
-        ex_db = ex_db.sort_values('날짜', ascending=False)
-        latest = ex_db.iloc[0]
-        today_date = latest['날짜']
+        ex_db['연도'] = ex_db['날짜'].dt.year
+        ex_db['월'] = ex_db['날짜'].dt.month
         
-        # 비교 시점 계산
-        date_1m = today_date - pd.DateOffset(months=1)
-        date_1y = today_date - pd.DateOffset(years=1)
+        # 2025년과 2026년 데이터만 집중 분석
+        df_target = ex_db[ex_db['연도'].isin([2025, 2026])]
         
-        def get_past_val(df, target_date, col):
-            past_df = df[df['날짜'] <= target_date]
-            return to_float(past_df.iloc[0][col]) if not past_df.empty else None
-
-        st.subheader(f"🔍 환율 변동 비교표 ({today_date.strftime('%Y-%m-%d')} 기준)")
-        
-        analysis_data = []
         for curr in ['usd', 'cny']:
-            now_v = to_float(latest.get(curr, 0))
-            m1_v = get_past_val(ex_db, date_1m, curr)
-            y1_v = get_past_val(ex_db, date_1y, curr)
+            st.subheader(f"📊 {curr.upper()} 월별 환율 비교 (2025 vs 2026)")
             
-            # 전월 대비 계산
-            diff_m = now_v - m1_v if m1_v else 0
-            pct_m = (diff_m / m1_v * 100) if m1_v else 0
+            # 월별 평균 계산
+            m_avg = df_target.groupby(['연도', '월'])[curr].mean().reset_index()
             
-            # 전년 대비 계산
-            diff_y = now_v - y1_v if y1_v else 0
-            pct_y = (diff_y / y1_v * 100) if y1_v else 0
-            
-            analysis_data.append({
-                "통화": curr.upper(),
-                "현재 환율": now_v,
-                "전월 환율": m1_v if m1_v else "데이터 없음",
-                "전월대비 (증감)": f"{diff_m:+.2f} ({pct_m:+.2f}%)",
-                "전년 환율": y1_v if y1_v else "데이터 없음",
-                "전년대비 (증감)": f"{diff_y:+.2f} ({pct_y:+.2f}%)"
-            })
-        
-        # 분석표 출력
-        st.table(pd.DataFrame(analysis_data))
+            if not m_avg.empty:
+                # 사용자님이 원하시는 순서: 행은 '월', 열은 '연도별 평균'
+                pivot = m_avg.pivot(index='월', columns='연도', values=curr)
+                
+                # 컬럼명 가독성 있게 수정
+                pivot.columns = [f"{int(c)}년 평균" for c in pivot.columns]
+                
+                # 25년과 26년 데이터가 모두 있을 때만 증감 계산
+                col_25 = "2025년 평균"
+                col_26 = "2026년 평균"
+                
+                if col_25 in pivot.columns and col_26 in pivot.columns:
+                    pivot['전년동월대비(증감)'] = pivot[col_26] - pivot[col_25]
+                    pivot['변동률(%)'] = (pivot['전년동월대비(증감)'] / pivot[col_25] * 100)
+                
+                # 인덱스(월)를 1월부터 12월까지 순서대로 정렬하여 출력
+                st.table(pivot.sort_index().style.format("{:,.2f}"))
+            else:
+                st.info(f"{curr.upper()} 비교할 연도 데이터가 충분하지 않습니다.")
 
         st.divider()
 
-        # 3. 환율 추세 차트 (복구 완료)
-        st.subheader("📊 환율 추세 그래프")
+        # 3. 환율 추세 차트
+        st.subheader("📊 전체 환율 추세 그래프")
         fig = go.Figure()
         if 'usd' in ex_db.columns:
-            fig.add_trace(go.Scatter(x=ex_db['날짜'], y=ex_db['usd'], name="USD", line=dict(color='blue', width=2)))
+            fig.add_trace(go.Scatter(x=ex_db['날짜'], y=ex_db['usd'], name="USD", line=dict(color='blue')))
         if 'cny' in ex_db.columns:
-            fig.add_trace(go.Scatter(x=ex_db['날짜'], y=ex_db['cny'], name="CNY", line=dict(color='red', width=2)))
-            
-        fig.update_layout(hovermode="x unified", height=400, margin=dict(l=10, r=10, t=10, b=10))
+            fig.add_trace(go.Scatter(x=ex_db['날짜'], y=ex_db['cny'], name="CNY", line=dict(color='red')))
+        fig.update_layout(hovermode="x unified", height=300, margin=dict(l=10, r=10, t=10, b=10))
         st.plotly_chart(fig, use_container_width=True)
-        
-        # 4. 원본 데이터 관리
-        with st.expander("데이터 원본 보기 및 수정"):
-            display_db = ex_db.copy()
-            display_db['날짜'] = display_db['날짜'].dt.strftime('%Y-%m-%d')
-            edited_ex = st.data_editor(display_db, hide_index=True, use_container_width=True)
-            if st.button("환율 데이터 수정 저장"):
-                upsert_supabase_data("exchange_rates", edited_ex.to_dict(orient='records'))
-                st.success("수정 완료"); st.rerun()
+
     else:
         st.info("환율 데이터가 없습니다. CSV 파일을 먼저 업로드해 주세요.")
