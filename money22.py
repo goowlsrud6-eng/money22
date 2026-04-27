@@ -340,59 +340,81 @@ with tabs[2]:
     else:
         st.info("데이터가 없습니다. 먼저 입금 내역을 등록해 주세요.")
 
-# --- [Tab 3] 거래처 관리 (모든 필드 복구 및 데이터 연동) ---
+# --- [Tab 3] 거래처 관리 (수기 + CSV 일괄 등록 복구) ---
 with tabs[3]:
     st.header("거래처 정보 관리")
     v_orig = get_supabase_data("vendors")
     
-    # 1. 신규 등록 폼 (모든 입력 칸 복구)
-    with st.form("new_v_form_full", clear_on_submit=True):
-        st.subheader("신규 거래처 등록")
-        col_v1, col_v2 = st.columns(2)
-        vn = col_v1.text_input("거래처명 (필수)")
-        vt = col_v2.selectbox("기본 유형", CATEGORIES)
+    col_v_in, col_v_csv = st.columns([1.5, 1])
+    
+    with col_v_in:
+        st.subheader("1. 신규 거래처 수기 등록")
+        with st.form("new_v_form_full", clear_on_submit=True):
+            v_c1, v_c2 = st.columns(2)
+            vn = v_c1.text_input("거래처명 (필수)")
+            vt = v_c2.selectbox("기본 유형", CATEGORIES)
+            
+            v_c3, v_c4, v_c5 = st.columns(3)
+            vb = v_c3.text_input("은행")
+            va = v_c4.text_input("계좌번호")
+            vh = v_c5.text_input("예금주")
+            
+            if st.form_submit_button("거래처 저장"):
+                if vn:
+                    upsert_supabase_data("vendors", {
+                        "거래처명": vn, "기본유형": vt, "은행": vb, "계좌번호": va, "예금주": vh
+                    })
+                    st.success(f"[{vn}] 등록 완료!"); st.rerun()
+
+    with col_v_csv:
+        st.subheader("2. 거래처 CSV 일괄 등록")
+        # 거래처 전용 CSV 양식 생성
+        v_template = pd.DataFrame(columns=["거래처명", "기본유형", "은행", "계좌번호", "예금주"])
+        st.download_button(
+            "거래처 양식 다운로드", 
+            v_template.to_csv(index=False).encode('utf-8-sig'), 
+            "vendor_template.csv"
+        )
         
-        col_v3, col_v4, col_v5 = st.columns(3)
-        vb = col_v3.text_input("은행")
-        va = col_v4.text_input("계좌번호")
-        vh = col_v5.text_input("예금주")
-        
-        if st.form_submit_button("거래처 등록 저장"):
-            if vn:
-                upsert_supabase_data("vendors", {
-                    "거래처명": vn, 
-                    "기본유형": vt, 
-                    "은행": vb, 
-                    "계좌번호": va, 
-                    "예금주": vh
-                })
-                st.success(f"[{vn}] 등록 완료!"); st.rerun()
-            else:
-                st.error("거래처명은 필수입니다.")
+        up_vendor = st.file_uploader("거래처 CSV 업로드", type=['csv'], key="v_up_file")
+        if up_vendor and st.button("거래처 일괄 저장 실행"):
+            try:
+                df_v_up = pd.read_csv(up_vendor)
+                df_v_up.columns = [str(c).strip().replace('\ufeff', '') for c in df_v_up.columns]
+                
+                v_list = []
+                for _, r in df_v_up.iterrows():
+                    if to_str(r.get('거래처명')):
+                        v_list.append({
+                            "거래처명": to_str(r.get('거래처명')),
+                            "기본유형": to_str(r.get('기본유형')) or "기타",
+                            "은행": to_str(r.get('은행')),
+                            "계좌번호": to_str(r.get('계좌번호')),
+                            "예금주": to_str(r.get('예금주'))
+                        })
+                
+                if v_list:
+                    upsert_supabase_data("vendors", v_list)
+                    st.success(f"{len(v_list)}건의 거래처 등록 완료!"); st.rerun()
+            except Exception as e:
+                st.error(f"업로드 에러: {e}")
 
     st.divider()
 
-    # 2. 기존 목록 수정 및 동기화
+    # 2. 기존 목록 수정 및 동기화 로직 (유지)
     if not v_orig.empty:
-        st.subheader("등록된 거래처 목록 (수정 후 저장 시 전체 데이터 연동)")
-        # 데이터 에디터에서 모든 컬럼을 편집 가능하게 표시
+        st.subheader("등록된 거래처 목록 (수정 시 연동된 데이터도 자동 변경)")
         ev_v = st.data_editor(v_orig, hide_index=True, use_container_width=True)
         
-        if st.button("수정 내용 저장 및 과거 데이터 일괄 동기화"):
-            # 이름 변경 시 입금/발주 데이터까지 싹 바꿔주는 v136 핵심 로직
+        if st.button("수정 내용 저장 및 과거 내역 동기화"):
             for i, r in ev_v.iterrows():
                 if i < len(v_orig) and v_orig.iloc[i]['거래처명'] != r['거래처명']:
                     old_n = v_orig.iloc[i]['거래처명']
-                    # 입금 내역(payments)과 발주 내역(orders)의 거래처명도 함께 변경
                     supabase.table("payments").update({"거래처명": r['거래처명'], "유형": r['기본유형']}).eq("거래처명", old_n).execute()
                     supabase.table("orders").update({"거래처명": r['거래처명'], "유형": r['기본유형']}).eq("거래처명", old_n).execute()
             
-            # 거래처 마스터 정보 최종 업데이트
             upsert_supabase_data("vendors", ev_v.to_dict(orient='records'))
-            st.success("거래처 정보 및 관련 내역이 모두 업데이트되었습니다.")
-            st.rerun()
-    else:
-        st.info("등록된 거래처가 없습니다.")
+            st.success("동기화 완료"); st.rerun()
 
 # --- [Tab 4] 환율 분석 (차트 꼬임 방지 + 좌우 대칭 레이아웃 완벽 복구) ---
 with tabs[4]:
