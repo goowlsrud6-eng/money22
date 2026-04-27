@@ -171,21 +171,21 @@ with tabs[0]:
                 up_list.append({"id": ids[i], "발주번호": oid_v or None, "입금일": smart_date(r.get('입금일')), "유형": match_o['유형'] if match_o is not None else (to_str(r.get('유형')) or "사입"), "거래처명": vn_f, "상품명": match_o['상품명'] if match_o is not None else to_str(r.get('상품명')), "통화": match_o['통화'] if match_o is not None else "한화", "실입금액": to_float(r.get('실입금액')), "선급금액": to_float(r.get('선급금액')), "메모": to_str(r.get('송금사유')), "은행": vi['은행'] if vi is not None else "", "계좌번호": vi['계좌번호'] if vi is not None else "", "예금주": vi['예금주'] if vi is not None else ""})
             if upsert_supabase_data("payments", up_list): st.session_state.pay_up_key += 1; st.rerun()
 
-# --- [Tab 1] 발주서 등록 및 관리 (v136 마감 및 삭제 로직 보강) ---
+# --- [Tab 1] 발주서 등록 및 관리 (가시성 최적화 및 삭제 기능 추가) ---
 with tabs[1]:
-    st.header("발주서 등록 및 마감 관리")
+    st.header("📦 발주서 등록 및 마감 관리")
     v_master, o_data = get_supabase_data("vendors"), get_supabase_data("orders")
     
-    c1, c2 = st.columns([1, 1.5])
+    c1, c2 = st.columns([1, 1.8]) # 가시성을 위해 목록 영역(c2)을 더 넓게 배분
+    
     with c1:
         st.subheader("1. 발주 분석 및 등록")
-        # 이카운트 엑셀 업로드
         o_files = st.file_uploader("이카운트 엑셀 선택", type=['xlsx'], accept_multiple_files=True, key=f"ord_f_{st.session_state.order_up_key}")
-        if o_files and st.button("발주서 일괄 분석 실행"):
+        if o_files and st.button("🚀 발주서 일괄 분석 실행", use_container_width=True):
             for f in o_files: 
                 success, msg = process_ecount_v136_cloud(f)
                 if not success: st.error(msg)
-            st.session_state.order_up_key += 1; st.success("분석 완료"); st.rerun()
+            st.session_state.order_up_key += 1; st.success("분석 완료!"); st.rerun()
         
         st.divider()
         
@@ -193,14 +193,14 @@ with tabs[1]:
             st.write("**수기 발주 입력**")
             m_oid = st.text_input("발주번호 (필수)")
             m_vn = st.selectbox("거래처 선택", ["선택"] + (list(v_master['거래처명']) if not v_master.empty else []))
+            
             col_m1, col_m2 = st.columns(2)
             m_amt = col_m1.number_input("발주총액", format="%.2f")
             m_cur = col_m2.selectbox("통화", ["한화", "USD", "CNY"])
             m_item = st.text_input("상품명 (선택)")
             
-            if st.form_submit_button("발주 저장"):
+            if st.form_submit_button("➕ 발주 저장", use_container_width=True):
                 if m_oid and m_vn != "선택":
-                    # 신규 등록 시 기본값 설정
                     v_type = v_master[v_master['거래처명']==m_vn].iloc[0]['기본유형'] if not v_master.empty else "기타"
                     upsert_supabase_data("orders", {
                         "발주번호": m_oid, 
@@ -217,68 +217,83 @@ with tabs[1]:
                     st.warning("발주번호와 거래처를 확인하세요.")
 
     with c2:
-        st.subheader("2. 발주 목록 및 마감 처리")
+        st.subheader("2. 발주 목록 및 소급 수정")
         if not o_data.empty:
-            # v136의 핵심: 마감여부를 체크박스로 직관적으로 관리
+            # [가시성 최적화] 데이터 에디터 설정
             ev_o = st.data_editor(
                 o_data.sort_values('발주일', ascending=False), 
                 hide_index=True, 
                 use_container_width=True,
+                key="order_editor",
                 column_config={
-                    "마감여부": st.column_config.CheckboxColumn("마감", help="마감 시 입금등록 목록에서 제외", default=0),
-                    "발주총액": st.column_config.NumberColumn(format="%.2f")
+                    "마감여부": st.column_config.CheckboxColumn("마감", width="small", help="마감 시 입금등록 목록에서 제외"),
+                    "발주번호": st.column_config.TextColumn("발주번호", width="medium"),
+                    "발주일": st.column_config.DateColumn("발주일", width="medium"),
+                    "거래처명": st.column_config.TextColumn("거래처명", width="medium"),
+                    "상품명": st.column_config.TextColumn("상품명", width="large"), # 상품명을 넓게
+                    "발주총액": st.column_config.NumberColumn("총액", format="%.2f", width="medium"),
+                    "통화": st.column_config.TextColumn("통화", width="small")
                 },
-                disabled=["발주번호"] # 발주번호 수정 방지
+                disabled=["발주번호"] 
             )
             
-            col_btn1, col_btn2 = st.columns(2)
-            if col_btn1.button("수정 내용 및 마감 상태 저장"):
+            col_b1, col_b2 = st.columns([2, 1])
+            if col_b1.button("💾 수정 내용 및 마감 상태 저장", use_container_width=True):
                 upsert_supabase_data("orders", ev_o.to_dict(orient='records'))
-                # 거래처명이나 상품명이 바뀌었을 경우 입금내역도 소급 수정
                 for _, r in ev_o.iterrows():
                     supabase.table("payments").update({
-                        "거래처명": r['거래처명'], 
-                        "유형": r['유형'], 
-                        "상품명": r['상품명']
+                        "거래처명": r['거래처명'], "유형": r['유형'], "상품명": r['상품명']
                     }).eq("발주번호", r['발주번호']).execute()
-                st.success("동기화 완료"); st.rerun()
-                
-            if col_btn2.button("⚠️ 선택된 발주 삭제"):
-                # 에디터에서 행 삭제 기능 대신, 체크박스나 필터를 활용한 삭제 로직 보강 가능
-                st.warning("삭제는 Supabase 대시보드에서 직접 수행하거나 별도 삭제 버튼 로직이 필요합니다.")
+                st.success("동기화 완료!"); st.rerun()
+            
+            # --- 발주 삭제 기능 추가 ---
+            with st.expander("🗑️ 발주 데이터 삭제"):
+                del_oid = st.selectbox("삭제할 발주번호 선택", ["선택"] + list(o_data['발주번호'].unique()))
+                if st.button("❌ 선택한 발주 삭제 실행", type="secondary", use_container_width=True):
+                    if del_oid != "선택":
+                        # 발주 데이터 삭제
+                        supabase.table("orders").delete().eq("발주번호", del_oid).execute()
+                        # 연결된 입금 내역의 발주번호 참조 해제 (선택 사항: 입금 내역도 지우려면 delete() 사용)
+                        supabase.table("payments").update({"발주번호": None}).eq("발주번호", del_oid).execute()
+                        st.error(f"[{del_oid}] 발주서가 삭제되었습니다."); st.rerun()
+                    else:
+                        st.info("삭제할 발주번호를 먼저 선택해 주세요.")
         else:
             st.info("등록된 발주 내역이 없습니다.")
             
-# --- [Tab 2] 상세 내역 및 통합 정산 (연도 범위 조회 기능 포함) ---
+# --- [Tab 2] 상세 내역 및 통합 정산 (비율 조정 및 가시성 최적화 버전) ---
 with tabs[2]:
-    st.header("상세 내역 및 통합 정산")
-    p_all, o_all, ex_rates = get_supabase_data("payments"), get_supabase_data("orders"), get_supabase_data("exchange_rates")
+    st.header("📋 상세 내역 및 통합 정산")
+    
+    # 데이터 로드
+    p_all = get_supabase_data("payments")
+    o_all = get_supabase_data("orders")
+    ex_rates = get_supabase_data("exchange_rates")
     
     if not p_all.empty:
         p_all['dt'] = pd.to_datetime(p_all['입금일'])
         
-        # 1. 연도 범위 필터 (25년~26년 등 이어서 보기 가능)
-        f_c1, f_c2, f_c3, f_c4 = st.columns(4)
+        # 1. 필터 섹션 (너비 조절을 위해 columns 배치)
+        f_c1, f_c2, f_c3, f_c4 = st.columns([1, 1, 1, 1.5])
         years = sorted(p_all['dt'].dt.year.unique())
         
-        # 시작 연도와 종료 연도를 선택하여 범위를 만듬
+        # 시작/종료 연도 선택
         start_y = f_c1.selectbox("시작 연도", years, index=0)
         end_y = f_c1.selectbox("종료 연도", years, index=len(years)-1)
         
         target_m = f_c2.selectbox("조회 월", ["전체"] + list(range(1, 13)))
         filter_cat = f_c3.selectbox("유형 필터", ["전체"] + CATEGORIES)
-        search_key = f_c4.text_input("업체/상품 검색")
+        search_key = f_c4.text_input("🔍 업체/상품 검색 (검색어 입력)")
         
-        # 필터링 적용: 시작 연도 <= 데이터 연도 <= 종료 연도
+        # 필터링 적용
         filtered = p_all[(p_all['dt'].dt.year >= start_y) & (p_all['dt'].dt.year <= end_y)]
-        
         if target_m != "전체": 
             filtered = filtered[filtered['dt'].dt.month == int(target_m)]
         if filter_cat != "전체": 
             filtered = filtered[filtered['유형'] == filter_cat]
         if search_key: 
             filtered = filtered[filtered['거래처명'].str.contains(search_key, case=False, na=False) | 
-                              filtered['상품명'].str.contains(search_key, case=False, na=False)]
+                               filtered['상품명'].str.contains(search_key, case=False, na=False)]
         
         # 2. 한화 환산 로직 (v136 월평균 환율 적용)
         def get_v136_conversion(row):
@@ -292,46 +307,74 @@ with tabs[2]:
 
         filtered['한화환산액'] = filtered.apply(get_v136_conversion, axis=1)
 
-        # 3. 유형별 요약 테이블
-        st.subheader(f"📊 {start_y}년~{end_y}년 지출 요약")
+        # 3. 유형별 요약 테이블 (가운데 배치를 위해 여백 컬럼 활용)
+        st.markdown(f"### 📊 {start_y}년 ~ {end_y}년 지출 요약")
         if not filtered.empty:
             summary = filtered.groupby('유형').agg({
                 '실입금액': 'sum', 
                 '선급금액': 'sum', 
                 '한화환산액': 'sum'
             }).reset_index()
-            st.table(summary.style.format({
-                '실입금액': '{:,.2f}', '선급금액': '{:,.2f}', '한화환산액': '{:,.0f}'
-            }))
+            
+            sum_c1, sum_c2, sum_c3 = st.columns([0.1, 0.8, 0.1])
+            with sum_c2:
+                st.table(summary.style.format({
+                    '실입금액': '{:,.2f}', '선급금액': '{:,.2f}', '한화환산액': '{:,.0f}'
+                }))
 
-        # 4. 발주번호별 정산 및 잔액 (이 부분은 모든 연도의 발주를 대조해야 하므로 p_all 기준)
+        st.divider()
+
+        # 4. 발주번호별 정산 및 잔액 (가시성 최적화 적용)
         st.subheader("🔍 발주별 정산 및 미수금 현황 (전체 기간)")
         pay_agg = p_all.groupby('발주번호').agg({'실입금액':'sum', '선급금액':'sum'}).reset_index()
         settle_df = pd.merge(o_all, pay_agg, on='발주번호', how='left').fillna(0)
         settle_df['잔액'] = settle_df['발주총액'] - (settle_df['실입금액'] + settle_df['선급금액'])
         settle_df['상태'] = settle_df['마감여부'].apply(lambda x: "✅ 마감" if x == 1 else "⏳ 진행")
         
-        st.dataframe(settle_df[['발주번호','상태','거래처명','상품명','발주총액','실입금액','선급금액','잔액','통화']].sort_values('발주번호', ascending=False), use_container_width=True)
+        # 중요: 표 너비 비율 조정 (column_config)
+        st.data_editor(
+            settle_df[['발주번호','상태','거래처명','상품명','발주총액','실입금액','잔액','통화']].sort_values('발주번호', ascending=False),
+            hide_index=True,
+            use_container_width=True,
+            key="settle_editor",
+            column_config={
+                "발주번호": st.column_config.TextColumn("발주번호", width="small"),
+                "상태": st.column_config.TextColumn("상태", width="small"),
+                "거래처명": st.column_config.TextColumn("거래처명", width="medium"),
+                "상품명": st.column_config.TextColumn("상품명", width="large"), # 상품명을 넓게
+                "발주총액": st.column_config.NumberColumn("발주총액", format="%.2f", width="medium"),
+                "잔액": st.column_config.NumberColumn("미수잔액", format="%.2f", width="medium"),
+                "통화": st.column_config.TextColumn("통화", width="small")
+            }
+        )
 
-        # 5. 상세 내역 수정
-        st.subheader("📝 상세 내역 수정")
+        st.divider()
+
+        # 5. 상세 내역 수정 (가시성 최적화 적용)
+        st.subheader("📝 상세 내역 수정 및 관리")
         edit_cols = ['id', '유형', '발주번호', '거래처명', '상품명', '입금일', '통화', '실입금액', '선급금액', '한화환산액', '메모']
         edited_p = st.data_editor(
             filtered[edit_cols].sort_values('입금일', ascending=False), 
             hide_index=True, 
             use_container_width=True,
+            key="detail_editor",
             column_config={
-                "한화환산액": st.column_config.NumberColumn("한화환산액(참고)", format="%d"),
-                "실입금액": st.column_config.NumberColumn(format="%.2f"),
-                "선급금액": st.column_config.NumberColumn(format="%.2f")
+                "id": st.column_config.TextColumn("ID", width="small"),
+                "유형": st.column_config.SelectboxColumn("유형", options=CATEGORIES, width="small"),
+                "거래처명": st.column_config.TextColumn("거래처명", width="medium"),
+                "상품명": st.column_config.TextColumn("상품명", width="large"),
+                "입금일": st.column_config.DateColumn("입금일", width="medium"),
+                "한화환산액": st.column_config.NumberColumn("한화환산액(참고)", format="%d", width="medium"),
+                "실입금액": st.column_config.NumberColumn("입금액", format="%.2f", width="medium"),
+                "메모": st.column_config.TextColumn("비고/메모", width="large")
             }
         )
         
-        if st.button("수정 내용 클라우드 동기화 저장"):
+        if st.button("💾 수정 내용 클라우드 저장"):
             upsert_supabase_data("payments", edited_p.to_dict(orient='records'))
-            st.success("수정사항이 반영되었습니다."); st.rerun()
+            st.success("수정사항이 클라우드에 안전하게 반영되었습니다."); st.rerun()
 
-        # 6. 하단 메트릭
+        # 6. 하단 메트릭 요약
         st.divider()
         m1, m2, m3 = st.columns(3)
         m1.metric(f"선택 범위 총 환산액", f"{filtered['한화환산액'].sum():,.0f} 원")
@@ -340,44 +383,48 @@ with tabs[2]:
     else:
         st.info("데이터가 없습니다. 먼저 입금 내역을 등록해 주세요.")
 
-# --- [Tab 3] 거래처 관리 (수기 + CSV 일괄 등록 복구) ---
+# --- [Tab 3] 거래처 관리 (가시성 최적화 및 비율 조정 버전) ---
 with tabs[3]:
-    st.header("거래처 정보 관리")
+    st.header("🏢 거래처 정보 관리")
     v_orig = get_supabase_data("vendors")
     
+    # 상단 입력부: 수기 입력과 CSV 업로드를 적절한 비율로 배치
     col_v_in, col_v_csv = st.columns([1.5, 1])
     
     with col_v_in:
         st.subheader("1. 신규 거래처 수기 등록")
         with st.form("new_v_form_full", clear_on_submit=True):
-            v_c1, v_c2 = st.columns(2)
+            v_c1, v_c2 = st.columns([2, 1]) # 거래처명을 더 넓게
             vn = v_c1.text_input("거래처명 (필수)")
             vt = v_c2.selectbox("기본 유형", CATEGORIES)
             
-            v_c3, v_c4, v_c5 = st.columns(3)
+            v_c3, v_c4, v_c5 = st.columns([1, 2, 1]) # 계좌번호를 더 넓게
             vb = v_c3.text_input("은행")
             va = v_c4.text_input("계좌번호")
             vh = v_c5.text_input("예금주")
             
-            if st.form_submit_button("거래처 저장"):
+            if st.form_submit_button("➕ 거래처 정보 저장"):
                 if vn:
                     upsert_supabase_data("vendors", {
                         "거래처명": vn, "기본유형": vt, "은행": vb, "계좌번호": va, "예금주": vh
                     })
-                    st.success(f"[{vn}] 등록 완료!"); st.rerun()
+                    st.success(f"✅ [{vn}] 등록 완료!"); st.rerun()
+                else:
+                    st.error("⚠️ 거래처명은 필수 입력 항목입니다.")
 
     with col_v_csv:
-        st.subheader("2. 거래처 CSV 일괄 등록")
+        st.subheader("2. CSV 일괄 등록")
         # 거래처 전용 CSV 양식 생성
         v_template = pd.DataFrame(columns=["거래처명", "기본유형", "은행", "계좌번호", "예금주"])
         st.download_button(
-            "거래처 양식 다운로드", 
+            "📥 등록 양식(CSV) 다운로드", 
             v_template.to_csv(index=False).encode('utf-8-sig'), 
-            "vendor_template.csv"
+            "vendor_template.csv",
+            use_container_width=True
         )
         
-        up_vendor = st.file_uploader("거래처 CSV 업로드", type=['csv'], key="v_up_file")
-        if up_vendor and st.button("거래처 일괄 저장 실행"):
+        up_vendor = st.file_uploader("파일 선택", type=['csv'], key="v_up_file")
+        if up_vendor and st.button("🚀 일괄 저장 실행", use_container_width=True):
             try:
                 df_v_up = pd.read_csv(up_vendor)
                 df_v_up.columns = [str(c).strip().replace('\ufeff', '') for c in df_v_up.columns]
@@ -395,32 +442,57 @@ with tabs[3]:
                 
                 if v_list:
                     upsert_supabase_data("vendors", v_list)
-                    st.success(f"{len(v_list)}건의 거래처 등록 완료!"); st.rerun()
+                    st.success(f"✨ {len(v_list)}건의 거래처 등록 완료!"); st.rerun()
             except Exception as e:
-                st.error(f"업로드 에러: {e}")
+                st.error(f"❌ 업로드 중 오류 발생: {e}")
 
     st.divider()
 
-    # 2. 기존 목록 수정 및 동기화 로직 (유지)
+    # 2. 기존 목록 수정 및 가시성 최적화
     if not v_orig.empty:
-        st.subheader("등록된 거래처 목록 (수정 시 연동된 데이터도 자동 변경)")
-        ev_v = st.data_editor(v_orig, hide_index=True, use_container_width=True)
+        st.subheader("📋 등록된 거래처 목록")
+        st.info("💡 거래처명을 수정하면 과거의 입금/발주 내역의 이름도 모두 함께 변경됩니다.")
         
-        if st.button("수정 내용 저장 및 과거 내역 동기화"):
+        # 가시성 핵심: 컬럼별 너비 지정
+        ev_v = st.data_editor(
+            v_orig.sort_values('거래처명'), 
+            hide_index=True, 
+            use_container_width=True,
+            key="vendor_editor",
+            column_config={
+                "거래처명": st.column_config.TextColumn("거래처명", width="large", help="수정 시 모든 내역에 소급 적용"),
+                "기본유형": st.column_config.SelectboxColumn("기본 유형", options=CATEGORIES, width="small"),
+                "은행": st.column_config.TextColumn("은행", width="small"),
+                "계좌번호": st.column_config.TextColumn("계좌번호", width="medium"),
+                "예금주": st.column_config.TextColumn("예금주", width="small")
+            }
+        )
+        
+        col_save1, col_save2 = st.columns([1, 3])
+        if col_save1.button("💾 변경사항 동기화 저장", use_container_width=True):
+            # 동기화 로직 (이름 변경 시 연동 데이터 소급 수정)
             for i, r in ev_v.iterrows():
-                if i < len(v_orig) and v_orig.iloc[i]['거래처명'] != r['거래처명']:
-                    old_n = v_orig.iloc[i]['거래처명']
+                # 기존 데이터와 비교하여 이름이 바뀌었는지 확인
+                target_id = r.get('id')
+                old_row = v_orig[v_orig['id'] == target_id]
+                
+                if not old_row.empty and old_row.iloc[0]['거래처명'] != r['거래처명']:
+                    old_n = old_row.iloc[0]['거래처명']
+                    # 연동된 payments, orders 테이블 일괄 업데이트
                     supabase.table("payments").update({"거래처명": r['거래처명'], "유형": r['기본유형']}).eq("거래처명", old_n).execute()
                     supabase.table("orders").update({"거래처명": r['거래처명'], "유형": r['기본유형']}).eq("거래처명", old_n).execute()
             
+            # 최종 마스터 정보 업데이트
             upsert_supabase_data("vendors", ev_v.to_dict(orient='records'))
-            st.success("동기화 완료"); st.rerun()
+            st.success("✅ 거래처 정보 및 과거 내역 동기화가 완료되었습니다."); st.rerun()
+    else:
+        st.info("📢 등록된 거래처 정보가 없습니다. 신규 거래처를 등록해 주세요.")
 
-# --- [Tab 4] 환율 분석 (차트 꼬임 방지 + 좌우 대칭 레이아웃 완벽 복구) ---
+# --- [Tab 4] 환율 분석 (가시성 최적화 및 좌우 대칭 레이아웃) ---
 with tabs[4]:
     st.header("📈 환율 데이터 분석 및 관리")
     
-    # 1. 환율 데이터 업로드 로직
+    # 1. 환율 데이터 업로드 섹션
     def up_ex(u, cur):
         try:
             df_ex = pd.read_csv(u)
@@ -435,14 +507,14 @@ with tabs[4]:
         except Exception as e:
             st.error(f"업로드 에러: {e}")
 
-    up1, up2 = st.columns(2)
-    with up1:
+    up_c1, up_c2 = st.columns(2)
+    with up_c1:
         u_u = st.file_uploader("USD CSV 업로드", type=['csv'], key="usd_up")
-        if u_u and st.button("USD 데이터 동기화"):
+        if u_u and st.button("USD 데이터 동기화", use_container_width=True):
             up_ex(u_u, "USD"); st.rerun()
-    with up2:
+    with up_c2:
         u_c = st.file_uploader("CNY CSV 업로드", type=['csv'], key="cny_up")
-        if u_c and st.button("CNY 데이터 동기화"):
+        if u_c and st.button("CNY 데이터 동기화", use_container_width=True):
             up_ex(u_c, "CNY"); st.rerun()
 
     st.divider()
@@ -451,77 +523,90 @@ with tabs[4]:
     ex_db = get_supabase_data("exchange_rates")
     
     if not ex_db.empty:
-        # 데이터 전처리
         ex_db['날짜'] = pd.to_datetime(ex_db['날짜'])
         ex_db['연도'] = ex_db['날짜'].dt.year
         ex_db['월'] = ex_db['날짜'].dt.month
-        
-        # 2025~2026년 비교용 데이터 필터링
         df_target = ex_db[ex_db['연도'].isin([2025, 2026])]
 
-        # 좌우 레이아웃 분할
-        col_left, col_right = st.columns(2)
+        # 가시성을 위해 좌우 여백을 살짝 둔 2컬럼 레이아웃
+        main_l, main_r = st.columns([1, 1], gap="large")
 
         for i, curr in enumerate(['usd', 'cny']):
-            target_col = col_left if i == 0 else col_right
+            target_col = main_l if i == 0 else main_r
             
             with target_col:
-                st.subheader(f"💱 {curr.upper()} 분석")
+                st.subheader(f"💱 {curr.upper()} 분석 리포트")
                 
-                # [상단] 차트 배치 (정렬 추가로 선 꼬임 방지)
-                if curr in ex_db.columns:
-                    # 날짜순 정렬을 해야 선이 꼬이지 않습니다.
-                    chart_df = ex_db[['날짜', curr]].dropna().sort_values('날짜')
-                    
+                # [상단] 차트 배치 (정렬로 꼬임 방지)
+                chart_df = ex_db[['날짜', curr]].dropna().sort_values('날짜')
+                if not chart_df.empty:
                     fig = go.Figure()
                     fig.add_trace(go.Scatter(
                         x=chart_df['날짜'], 
                         y=chart_df[curr], 
-                        name=curr.upper(), 
                         mode='lines',
                         line=dict(color='blue' if curr=='usd' else 'red', width=2)
                     ))
                     fig.update_layout(
-                        height=300, 
+                        height=250, 
                         margin=dict(l=0, r=0, t=10, b=0), 
                         showlegend=False,
                         hovermode="x unified"
                     )
                     st.plotly_chart(fig, use_container_width=True)
                 
-                # [하단] 월별/연도별 비교표 배치
+                # [하단] 월별 평균 비교표 (가시성 최적화)
                 m_avg = df_target.groupby(['연도', '월'])[curr].mean().reset_index()
                 if not m_avg.empty:
                     pivot = m_avg.pivot(index='월', columns='연도', values=curr)
-                    # 컬럼명 존재 여부 확인 후 이름 변경
                     pivot.columns = [f"{int(c)}년" for c in pivot.columns]
                     
-                    # 2025년과 2026년 데이터가 모두 있을 때만 증감 계산
+                    # 증감 로직
                     c25, c26 = "2025년", "2026년"
                     if c25 in pivot.columns and c26 in pivot.columns:
                         pivot['증감'] = pivot[c26] - pivot[c25]
                         pivot['%'] = (pivot['증감'] / pivot[c25] * 100)
                     
-                    st.write(f"**{curr.upper()} 월별 평균 대조 (2025 vs 2026)**")
-                    st.table(pivot.sort_index().style.format("{:,.2f}"))
+                    st.write(f"**{curr.upper()} 월별 평균 대조**")
+                    # 표가 너무 가로로 찢어지지 않도록 설정
+                    st.dataframe(
+                        pivot.sort_index().style.format("{:,.2f}"),
+                        use_container_width=True,
+                        column_config={
+                            "월": st.column_config.TextColumn("월", width="small"),
+                            "2025년": st.column_config.NumberColumn("25년", width="small"),
+                            "2026년": st.column_config.NumberColumn("26년", width="small"),
+                        }
+                    )
                 else:
-                    st.info(f"{curr.upper()} 비교 분석을 위한 2025/2026 데이터가 부족합니다.")
+                    st.info(f"{curr.upper()} 데이터 부족")
 
         st.divider()
         
-        # 3. 데이터 원본 수정 (하단 배치)
-        with st.expander("데이터 관리 및 원본 수정"):
-            display_db = ex_db.copy().sort_values('날짜', ascending=False)
-            display_db['날짜'] = display_db['날짜'].dt.strftime('%Y-%m-%d')
-            # 표시할 컬럼만 선택
-            cols = [c for c in ['날짜', 'usd', 'cny'] if c in display_db.columns]
-            edited_ex = st.data_editor(display_db[cols], hide_index=True, use_container_width=True)
-            
-            if st.button("수정 내용 저장"):
-                try:
-                    upsert_supabase_data("exchange_rates", edited_ex.to_dict(orient='records'))
-                    st.success("저장되었습니다."); st.rerun()
-                except Exception as e:
-                    st.error(f"저장 중 오류 발생: {e}")
+        # 3. 데이터 원본 관리
+        with st.expander("🛠️ 환율 데이터 원본 관리 및 수정"):
+            sub_c1, sub_c2, sub_c3 = st.columns([0.1, 0.8, 0.1])
+            with sub_c2:
+                display_db = ex_db.copy().sort_values('날짜', ascending=False)
+                display_db['날짜'] = display_db['날짜'].dt.strftime('%Y-%m-%d')
+                cols = [c for c in ['날짜', 'usd', 'cny'] if c in display_db.columns]
+                
+                edited_ex = st.data_editor(
+                    display_db[cols], 
+                    hide_index=True, 
+                    use_container_width=True,
+                    column_config={
+                        "날짜": st.column_config.TextColumn("날짜", width="medium"),
+                        "usd": st.column_config.NumberColumn("USD", format="%.2f", width="small"),
+                        "cny": st.column_config.NumberColumn("CNY", format="%.2f", width="small")
+                    }
+                )
+                
+                if st.button("💾 수정 내용 저장", use_container_width=True):
+                    try:
+                        upsert_supabase_data("exchange_rates", edited_ex.to_dict(orient='records'))
+                        st.success("저장 완료!"); st.rerun()
+                    except Exception as e:
+                        st.error(f"저장 실패: {e}")
     else:
-        st.info("데이터가 없습니다. 상단의 업로더를 통해 환율 CSV 파일을 등록해 주세요.")
+        st.info("환율 데이터를 업로드해 주세요.")
