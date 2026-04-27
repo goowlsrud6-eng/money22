@@ -26,6 +26,51 @@ def run_backup():
 st.set_page_config(page_title="자금 관리 시스템 v136_Final", layout="wide")
 run_backup()
 
+# ==============================================================================
+# [신규 추가] 데이터베이스 보존 (내려받기/올리기) 로직
+# ==============================================================================
+def get_db_binary():
+    """DB 파일을 바이너리 형태로 읽어옵니다."""
+    with open('finance_final_v136.db', 'rb') as f:
+        return f.read()
+
+def restore_db(uploaded_file):
+    """업로드된 파일을 현재 DB 파일로 덮어씁니다."""
+    with open('finance_final_v136.db', 'wb') as f:
+        f.write(uploaded_file.getbuffer())
+    st.success("데이터베이스 복구가 완료되었습니다! 앱을 다시 시작하거나 새로고침하세요.")
+    st.rerun()
+
+# 사이드바에 데이터 관리 메뉴 추가
+with st.sidebar:
+    st.header("💾 데이터 보존 관리")
+    st.info("Streamlit 서버는 매일 초기화될 수 있습니다. 작업 종료 전 반드시 DB를 내려받으세요.")
+    
+    # 1. 다운로드 버튼
+    if os.path.exists('finance_final_v136.db'):
+        st.download_button(
+            label="📤 현재 데이터 DB 내려받기",
+            data=get_db_binary(),
+            file_name=f"finance_backup_{datetime.now().strftime('%Y%m%d_%H%M')}.db",
+            mime="application/octet-stream"
+        )
+    
+    st.divider()
+    
+    # 2. 업로드 버튼
+    st.write("📥 백업 파일로 복구하기")
+    uploaded_db = st.file_uploader("복구할 .db 파일을 선택하세요", type=['db'])
+    if uploaded_db is not None:
+        if st.button("데이터 복구 실행"):
+            restore_db(uploaded_db)
+
+    st.divider()
+    if st.button("🧹 임시 백업 폴더 정리"):
+        if os.path.exists('backups'):
+            shutil.rmtree('backups')
+            os.makedirs('backups')
+            st.success("백업 폴더가 정리되었습니다.")
+
 @st.cache_resource
 def get_db_connection():
     """데이터베이스 연결 및 테이블 스키마 생성"""
