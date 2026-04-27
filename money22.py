@@ -129,7 +129,9 @@ with tabs[0]:
     v_master, o_data = get_supabase_data("vendors"), get_supabase_data("orders")
     o_active = o_data[o_data['마감여부'] == 0] if not o_data.empty else pd.DataFrame()
     
+    # 변수 이름을 col_input, col_excel로 정의
     col_input, col_excel = st.columns([1.5, 1])
+    
     with col_input:
         st.subheader("1. 수기 직접 입력")
         with st.form("manual_pay_form", clear_on_submit=True):
@@ -145,10 +147,12 @@ with tabs[0]:
                 if p_vn == "선택": st.error("거래처를 선택하세요.")
                 else:
                     vi = v_master[v_master['거래처명']==p_vn].iloc[0]
+                    # v136 ID 재사용 로직 적용
                     upsert_supabase_data("payments", {"id": get_multiple_available_ids(1)[0], "발주번호": p_oid if p_oid != "없음" else None, "입금일": p_date.strftime("%Y-%m-%d"), "유형": p_ct, "거래처명": p_vn, "상품명": p_pr, "통화": p_cur, "실입금액": p_dep, "선급금액": p_pre, "메모": p_memo, "은행": vi['은행'], "계좌번호": vi['계좌번호'], "예금주": vi['예금주']})
                     st.success("저장 완료"); st.rerun()
 
-    with col2:
+    # 에러 방지: 위에서 정의한 col_excel 사용
+    with col_excel:
         st.subheader("2. CSV 일괄 업로드 (v136 지능형 매칭)")
         csv_template = pd.DataFrame(columns=["발주번호", "거래처", "유형", "상품명", "입금일", "실입금액", "선급금액", "송금사유"])
         st.download_button("양식 다운로드", csv_template.to_csv(index=False).encode('utf-8-sig'), "payment_template.csv")
@@ -163,6 +167,7 @@ with tabs[0]:
                 match_o = o_data[o_data['발주번호'] == oid_v].iloc[0] if oid_v and not o_data[o_data['발주번호'] == oid_v].empty else None
                 vn_f = match_o['거래처명'] if match_o is not None else vn_v
                 vi = v_master[v_master['거래처명'].str.lower() == vn_f.lower()].iloc[0] if not v_master[v_master['거래처명'].str.lower() == vn_f.lower()].empty else None
+                # 지능형 필드 매칭 로직
                 up_list.append({"id": ids[i], "발주번호": oid_v or None, "입금일": smart_date(r.get('입금일')), "유형": match_o['유형'] if match_o is not None else (to_str(r.get('유형')) or "사입"), "거래처명": vn_f, "상품명": match_o['상품명'] if match_o is not None else to_str(r.get('상품명')), "통화": match_o['통화'] if match_o is not None else "한화", "실입금액": to_float(r.get('실입금액')), "선급금액": to_float(r.get('선급금액')), "메모": to_str(r.get('송금사유')), "은행": vi['은행'] if vi is not None else "", "계좌번호": vi['계좌번호'] if vi is not None else "", "예금주": vi['예금주'] if vi is not None else ""})
             if upsert_supabase_data("payments", up_list): st.session_state.pay_up_key += 1; st.rerun()
 
