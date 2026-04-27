@@ -295,24 +295,96 @@ with tabs[3]:
     else:
         st.info("등록된 거래처가 없습니다.")
 
-# --- [Tab 4] 환율 관리 ---
+# --- [Tab 4] 환율 분석 (전년/전월 대비 분석 로직 완벽 복구) ---
 with tabs[4]:
-    st.header("환율 분석")
+    st.header("📈 환율 데이터 분석 및 관리")
+    
+    # 1. 환율 데이터 업로드 섹션
     def up_ex(u, cur):
-        df = pd.read_csv(u)
-        upsert_supabase_data("exchange_rates", [{"날짜": smart_date(r['날짜']), cur.lower(): to_float(r['종가'])} for _, r in df.iterrows()])
-    c1, c2 = st.columns(2)
-    with c1:
-        u_u = st.file_uploader("USD CSV", type=['csv'])
-        if u_u and st.button("USD 업로드"): up_ex(u_u, "USD"); st.rerun()
-    with c2:
-        u_c = st.file_uploader("CNY CSV", type=['csv'])
-        if u_c and st.button("CNY 업로드"): up_ex(u_c, "CNY"); st.rerun()
-    ex_db = get_supabase_data("exchange_rates")
-    if not ex_db.empty:
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=ex_db['날짜'], y=ex_db['usd'], name="USD"))
-        fig.add_trace(go.Scatter(x=ex_db['날짜'], y=ex_db['cny'], name="CNY"))
-        st.plotly_chart(fig, use_container_width=True)
+        df_ex = pd.read_csv(u)
+        # CSV 컬럼명 공백 제거 및 정리
+        df_ex.columns = [c.strip() for c in df_ex.columns]
+        data_list = []
+        for _, r in df_ex.iterrows():
+            data_list.append({
+                "날짜": smart_date(r['날짜']), 
+                cur.lower(): to_float(r['종가'])
+            })
+        upsert_supabase_data("exchange_rates", data_list)
 
-st.sidebar.success("☁️ v136 Full Cloud Connected")
+    up1, up2 = st.columns(2)
+    with up1:
+        u_u = st.file_uploader("USD 환율 CSV (인베스팅닷컴 양식)", type=['csv'], key="usd_up")
+        if u_u and st.button("USD 데이터 동기화"):
+            up_ex(u_u, "USD"); st.success("USD 환율 업데이트 완료"); st.rerun()
+    with up2:
+        u_c = st.file_uploader("CNY 환율 CSV (인베스팅닷컴 양식)", type=['csv'], key="cny_up")
+        if u_c and st.button("CNY 데이터 동기화"):
+            up_ex(u_c, "CNY"); st.success("CNY 환율 업데이트 완료"); st.rerun()
+
+    st.divider()
+
+    # 2. 전년/전월 대비 분석 로직 (v136 핵심)
+    ex_db = get_supabase_data("exchange_rates")
+    
+    if not ex_db.empty:
+        ex_db['날짜'] = pd.to_datetime(ex_db['날짜'])
+        ex_db = ex_db.sort_values('날짜', ascending=False)
+        
+        # 최근 환율 데이터 추출
+        latest = ex_db.iloc[0]
+        today_date = latest['날짜']
+        
+        # 비교 시점 계산 (1개월 전, 1년 전)
+        date_1m = today_date - pd.DateOffset(months=1)
+        date_1y = today_date - pd.DateOffset(years=1)
+        
+        # 가장 가까운 과거 데이터 찾기 함수
+        def get_past_val(df, target_date, col):
+            past_df = df[df['날짜'] <= target_date]
+            return past_df.iloc[0][col] if not past_df.empty else None
+
+        st.subheader(f"🔍 환율 변동 분석 ({today_date.strftime('%Y-%m-%d')} 기준)")
+        
+        for curr in ['usd', 'cny']:
+            curr_name = curr.upper()
+            now_v = latest[curr]
+            m1_v = get_past_val(ex_db, date_1m, curr)
+            y1_v = get_past_val(ex_db, date_1y, curr)
+            
+            c1, c2, c3 = st.columns([1, 1, 1])
+            c1.metric(f"현재 {curr_name}", f"{now_v:,.2f}")
+            
+            if m1_v:
+                diff_m = now_v - m1_v
+                c2.metric("전월 대비", f"{m1_v:,.2f}", f"{diff_m:+.2f}")
+            else:
+                c2.info("전월 데이터 없음")
+                
+            if y1_v:
+                diff_y = now_v - y1_v
+                c3.metric("전년 대비", f"{y1_v:,.2f}", f"{diff_y:+.2f}")
+            else:
+                c3.info("전년 데이터 없음")
+
+        st.divider()
+
+        # 3. 환율 추세 차트
+        st.subheader("📊 환율 추세 그래프")
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=ex_db['날짜'], y=ex_db['usd'], name="USD", line=dict(color='blue')))
+        fig.add_trace(go.Scatter(x=ex_db['날짜'], y=ex_db['cny'], name="CNY", line=dict(color='red')))
+        fig.update_layout(hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # 4. 데이터 원본 확인 및 수동 수정
+        with st.expander("데이터 원본 보기 및 수정"):
+            edited_ex = st.data_editor(ex_db, hide_index=True, use_container_width=True)
+            if st.button("환율 데이터 수동 수정 저장"):
+                # 날짜를 다시 문자열로 변환하여 저장
+                save_ex = edited_ex.copy()
+                save_ex['날짜'] = save_ex['날짜'].dt.strftime('%Y-%m-%d')
+                upsert_supabase_data("exchange_rates", save_ex.to_dict(orient='records'))
+                st.success("수정 완료"); st.rerun()
+    else:
+        st.info("환율 데이터가 없습니다. CSV 파일을 먼저 업로드해 주세요.")
