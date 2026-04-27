@@ -9,7 +9,7 @@ from supabase import create_client, Client
 # ==============================================================================
 # 1. 초기 설정 및 Supabase 연결 (v136_Cloud_Full)
 # ==============================================================================
-st.set_page_config(page_title="자금 관리 시스템 v136_Full_Cloud", layout="wide")
+st.set_page_config(page_title="💳 입금·발주 관리", layout="wide")
 
 SUPABASE_URL = "https://nbpeuxblyphzmbktcqtq.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5icGV1eGJseXBoem1ia3RjcXRxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzcwMDc1NTEsImV4cCI6MjA5MjU4MzU1MX0.Q6A8T6_JiPIOBnjf8wKtjWTsRAk-pzvKdSqbfPp-3w4"
