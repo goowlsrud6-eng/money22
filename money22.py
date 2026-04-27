@@ -6,12 +6,6 @@ from datetime import datetime, timedelta
 import plotly.graph_objects as go
 from supabase import create_client, Client
 
-try:
-    v_test = supabase.table("vendors").select("*").limit(1).execute()
-    st.write("연결 성공: vendors 테이블 인식됨")
-except Exception as e:
-    st.error(f"연결 오류 발생: {e}")
-
 # ==============================================================================
 # 1. 초기 설정 및 Supabase 연결
 # ==============================================================================
