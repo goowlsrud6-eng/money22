@@ -28,13 +28,16 @@ def get_supabase_data(table_name):
     try:
         res = supabase.table(table_name).select("*").execute()
         return pd.DataFrame(res.data)
-    except: return pd.DataFrame()
+    except Exception as e:
+        st.error(f"{table_name} 조회 에러: {e}")
+        return pd.DataFrame()
 
 def upsert_supabase_data(table_name, data):
     try:
-        if not data: return True
-        supabase.table(table_name).upsert(data).execute()
-        return True
+        if not data:
+            return True
+        res = supabase.table(table_name).upsert(data).execute()
+        return res
     except Exception as e:
         st.error(f"{table_name} 저장 실패: {e}")
         return False
