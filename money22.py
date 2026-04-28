@@ -171,10 +171,11 @@ with tabs[0]:
                 up_list.append({"id": ids[i], "발주번호": oid_v or None, "입금일": smart_date(r.get('입금일')), "유형": match_o['유형'] if match_o is not None else (to_str(r.get('유형')) or "사입"), "거래처명": vn_f, "상품명": match_o['상품명'] if match_o is not None else to_str(r.get('상품명')), "통화": match_o['통화'] if match_o is not None else "한화", "실입금액": to_float(r.get('실입금액')), "선급금액": to_float(r.get('선급금액')), "메모": to_str(r.get('송금사유')), "은행": vi['은행'] if vi is not None else "", "계좌번호": vi['계좌번호'] if vi is not None else "", "예금주": vi['예금주'] if vi is not None else ""})
             if upsert_supabase_data("payments", up_list): st.session_state.pay_up_key += 1; st.rerun()
 
-# --- [Tab 1] 발주서 등록 및 관리 (누락된 소급 수정 로직 복구본) ---
+# --- [Tab 1] 발주서 등록 및 관리 (차수 기능 복구 및 쉼표 적용) ---
 with tabs[1]:
     st.header("📦 발주서 등록 및 마감 관리")
     
+    # 데이터 로드
     v_master = get_supabase_data("vendors")
     o_data = get_supabase_data("orders")
     
@@ -182,7 +183,8 @@ with tabs[1]:
     
     with c1:
         st.subheader("1. 발주 분석 및 등록")
-        o_files = st.file_uploader("이카운트 엑셀 선택", type=['xlsx'], accept_multiple_files=True, key=f"ord_f_{st.session_state.order_up_key}")
+        # [원본 로직] 이카운트 엑셀 분석 및 수기 등록
+        o_files = st.file_uploader("이카운트 엑셀 선택", type=['xlsx'], accept_multiple_files=True, key=f"ord_up_{st.session_state.order_up_key}")
         if o_files and st.button("🚀 발주서 일괄 분석 실행", use_container_width=True):
             for f in o_files: 
                 success, msg = process_ecount_v136_cloud(f)
@@ -190,72 +192,76 @@ with tabs[1]:
             st.session_state.order_up_key += 1; st.success("분석 완료!"); st.rerun()
         
         st.divider()
-        
+        # [원본 로직] 수기 등록 폼 (발주차수 필드 복구)
         with st.form("manual_ord_form", clear_on_submit=True):
             st.write("**수기 발주 입력**")
             m_oid = st.text_input("발주번호 (필수)")
+            m_step = st.text_input("발주차수") # [복구: source 39]
             m_vn = st.selectbox("거래처 선택", ["선택"] + (list(v_master['거래처명']) if not v_master.empty else []))
+            m_prod = st.text_input("상품명")
             
             col_m1, col_m2 = st.columns(2)
             m_amt = col_m1.number_input("발주총액", format="%.2f")
             m_cur = col_m2.selectbox("통화", ["한화", "USD", "CNY"])
-            m_item = st.text_input("상품명 (선택)")
             
             if st.form_submit_button("➕ 발주 저장", use_container_width=True):
                 if m_oid and m_vn != "선택":
                     v_type = v_master[v_master['거래처명']==m_vn].iloc[0]['기본유형'] if not v_master.empty else "기타"
                     upsert_supabase_data("orders", {
                         "발주번호": m_oid, "발주일": datetime.now().strftime("%Y-%m-%d"), 
-                        "거래처명": m_vn, "상품명": m_item or "수기입력",
+                        "발주차수": m_step, "거래처명": m_vn, "상품명": m_prod, 
                         "유형": v_type, "발주총액": m_amt, "통화": m_cur, "마감여부": 0
-                    })
+                    }) # [복구: source 42]
                     st.success("저장 완료!"); st.rerun()
 
-        st.divider()
-        st.subheader("🗑️ 발주 데이터 삭제")
-        order_list = list(o_data['발주번호'].unique()) if not o_data.empty and '발주번호' in o_data.columns else []
-        del_oid = st.selectbox("삭제할 발주번호 선택", ["선택"] + order_list, key="del_box")
-        if st.button("❌ 선택한 발주 삭제 실행", type="secondary", use_container_width=True):
-            if del_oid != "선택":
-                # 발주서 삭제 및 입금내역 연결 해제
-                supabase.table("orders").delete().eq("발주번호", del_oid).execute()
-                supabase.table("payments").update({"발주번호": None}).eq("발주번호", del_oid).execute()
-                st.error(f"[{del_oid}] 삭제됨"); st.rerun()
-
     with c2:
-        st.subheader("2. 발주 목록 및 소급 수정")
+        st.subheader("2. 발주 목록 및 마감 관리")
         
-        if not o_data.empty and '발주번호' in o_data.columns and '발주일' in o_data.columns:
+        if not o_data.empty:
+            # [원본 기능] 마감 건 숨기기 체크박스 [cite: 43]
+            show_all = st.checkbox("이미 마감된 발주서까지 모두 보기", value=True)
+            
+            disp_o = o_data.copy()
+            if not show_all:
+                disp_o = disp_o[disp_o['마감여부'] == 0] [cite: 43]
+            
+            # [원본 스타일] 마감 건 회색 처리 [cite: 57]
+            def style_orders(df):
+                styles = pd.DataFrame('', index=df.index, columns=df.columns)
+                mask_closed = df['마감여부'] == 1
+                styles.loc[mask_closed, :] = 'background-color: #f9f9f9; color: #bbbbbb'
+                return styles
+
+            disp_o = disp_o.sort_values('발주일', ascending=False)
+            
             ev_o = st.data_editor(
-                o_data.sort_values('발주일', ascending=False), 
+                disp_o.style.apply(style_orders, axis=None),
                 hide_index=True, 
                 use_container_width=True,
-                key=f"editor_{len(o_data)}", 
+                key=f"ord_editor_{len(disp_o)}",
                 column_config={
-                    "마감여부": st.column_config.CheckboxColumn("마감"),
-                    "발주총액": st.column_config.NumberColumn("총액", format="%.2f"),
-                    "거래처명": st.column_config.SelectboxColumn("거래처명", options=list(v_master['거래처명']) if not v_master.empty else []),
-                    "유형": st.column_config.SelectboxColumn("유형", options=CATEGORIES)
+                    "마감여부": st.column_config.CheckboxColumn("마감"), [cite: 44]
+                    "발주총액": st.column_config.NumberColumn("총액", format="#,##0.00") # [쉼표 적용]
                 },
-                disabled=["발주번호"] 
+                disabled=["발주번호"] [cite: 43]
             )
             
-            # --- [복구된 핵심 기능] 저장 시 입금 내역 소급 수정 ---
-            if st.button("💾 수정 내용 저장 및 내역 동기화", use_container_width=True):
-                # 1. Orders 테이블 업데이트
+            if st.button("💾 수정 내용 저장 및 입금내역 소급 적용", use_container_width=True):
+                # 1. Orders 업데이트 [cite: 45]
                 upsert_supabase_data("orders", ev_o.to_dict(orient='records'))
                 
-                # 2. Payments 테이블 동기화 (발주번호가 같은 모든 입금 내역의 업체/상품명 수정)
+                # 2. Payments 소급 업데이트 (차수 동기화 추가) 
                 for _, r in ev_o.iterrows():
                     supabase.table("payments").update({
                         "거래처명": r['거래처명'], 
-                        "유형": r['유형'], 
-                        "상품명": r['상품명']
+                        "상품명": r['상품명'],
+                        "유형": r['유형'],
+                        "발주차수": r['발주차수'] # [차수 동기화 추가]
                     }).eq("발주번호", r['발주번호']).execute()
                 
-                st.success("✅ 발주 수정 및 관련 입금내역 동기화 완료!"); st.rerun()
+                st.success("반영되었습니다."); st.rerun()
         else:
-            st.info("💡 등록된 발주 내역이 없습니다. 왼쪽 메뉴를 이용해 주세요.")
+            st.info("등록된 발주 내역이 없습니다.")
             
 # --- [Tab 2] 상세 내역 및 통합 정산 (최종 수정본) ---
 with tabs[2]:
