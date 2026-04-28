@@ -379,27 +379,30 @@ with tabs[2]:
     else:
         st.info("데이터가 없습니다. 먼저 입금 내역을 등록해 주세요.")
 
-# --- [Tab 3] 거래처 관리 (가시성 최적화 및 비율 조정 버전) ---
+# --- [Tab 3] 거래처 관리  ---
 with tabs[3]:
     st.header("🏢 거래처 정보 관리")
-    v_orig = get_supabase_data("vendors")
     
-    # 상단 입력부: 수기 입력과 CSV 업로드를 적절한 비율로 배치
+    # [보완] 데이터 로드 즉시 오름차순 정렬
+    v_orig = get_supabase_data("vendors")
+    if not v_orig.empty:
+        v_orig = v_orig.sort_values('거래처명').reset_index(drop=True)
+    
     col_v_in, col_v_csv = st.columns([1.5, 1])
     
     with col_v_in:
         st.subheader("1. 신규 거래처 수기 등록")
         with st.form("new_v_form_full", clear_on_submit=True):
-            v_c1, v_c2 = st.columns([2, 1]) # 거래처명을 더 넓게
+            v_c1, v_c2 = st.columns([2, 1])
             vn = v_c1.text_input("거래처명 (필수)")
             vt = v_c2.selectbox("기본 유형", CATEGORIES)
             
-            v_c3, v_c4, v_c5 = st.columns([1, 2, 1]) # 계좌번호를 더 넓게
+            v_c3, v_c4, v_c5 = st.columns([1, 2, 1])
             vb = v_c3.text_input("은행")
             va = v_c4.text_input("계좌번호")
             vh = v_c5.text_input("예금주")
             
-            if st.form_submit_button("➕ 거래처 정보 저장"):
+            if st.form_submit_button("➕ 거래처 정보 저장", use_container_width=True):
                 if vn:
                     upsert_supabase_data("vendors", {
                         "거래처명": vn, "기본유형": vt, "은행": vb, "계좌번호": va, "예금주": vh
@@ -410,79 +413,61 @@ with tabs[3]:
 
     with col_v_csv:
         st.subheader("2. CSV 일괄 등록")
-        # 거래처 전용 CSV 양식 생성
         v_template = pd.DataFrame(columns=["거래처명", "기본유형", "은행", "계좌번호", "예금주"])
-        st.download_button(
-            "📥 등록 양식(CSV) 다운로드", 
-            v_template.to_csv(index=False).encode('utf-8-sig'), 
-            "vendor_template.csv",
-            use_container_width=True
-        )
-        
+        st.download_button("📥 등록 양식(CSV) 다운로드", v_template.to_csv(index=False).encode('utf-8-sig'), "vendor_template.csv", use_container_width=True)
         up_vendor = st.file_uploader("파일 선택", type=['csv'], key="v_up_file")
         if up_vendor and st.button("🚀 일괄 저장 실행", use_container_width=True):
             try:
                 df_v_up = pd.read_csv(up_vendor)
                 df_v_up.columns = [str(c).strip().replace('\ufeff', '') for c in df_v_up.columns]
-                
-                v_list = []
-                for _, r in df_v_up.iterrows():
-                    if to_str(r.get('거래처명')):
-                        v_list.append({
-                            "거래처명": to_str(r.get('거래처명')),
-                            "기본유형": to_str(r.get('기본유형')) or "기타",
-                            "은행": to_str(r.get('은행')),
-                            "계좌번호": to_str(r.get('계좌번호')),
-                            "예금주": to_str(r.get('예금주'))
-                        })
-                
+                v_list = [r.to_dict() for _, r in df_v_up.iterrows() if to_str(r.get('거래처명'))]
                 if v_list:
                     upsert_supabase_data("vendors", v_list)
-                    st.success(f"✨ {len(v_list)}건의 거래처 등록 완료!"); st.rerun()
+                    st.success(f"✨ {len(v_list)}건 등록 완료!"); st.rerun()
             except Exception as e:
-                st.error(f"❌ 업로드 중 오류 발생: {e}")
+                st.error(f"❌ 오류: {e}")
 
     st.divider()
 
-    # 2. 기존 목록 수정 및 가시성 최적화
+    # 2. 기존 목록 수정 및 검색
     if not v_orig.empty:
         st.subheader("📋 등록된 거래처 목록")
-        st.info("💡 거래처명을 수정하면 과거의 입금/발주 내역의 이름도 모두 함께 변경됩니다.")
         
-        # 가시성 핵심: 컬럼별 너비 지정
+        # [추가] 실시간 검색창
+        v_search = st.text_input("🔍 거래처 검색 (이름 또는 은행)", placeholder="찾으시는 거래처명을 입력하세요...")
+        
+        display_v = v_orig.copy()
+        if v_search:
+            display_v = display_v[display_v['거래처명'].str.contains(v_search, case=False, na=False) | 
+                                  display_v['은행'].str.contains(v_search, case=False, na=False)]
+
         ev_v = st.data_editor(
-            v_orig.sort_values('거래처명'), 
+            display_v, 
             hide_index=True, 
             use_container_width=True,
-            key="vendor_editor",
+            key="vendor_editor_v2",
             column_config={
-                "거래처명": st.column_config.TextColumn("거래처명", width="large", help="수정 시 모든 내역에 소급 적용"),
+                "거래처명": st.column_config.TextColumn("거래처명", width="large"),
                 "기본유형": st.column_config.SelectboxColumn("기본 유형", options=CATEGORIES, width="small"),
-                "은행": st.column_config.TextColumn("은행", width="small"),
                 "계좌번호": st.column_config.TextColumn("계좌번호", width="medium"),
-                "예금주": st.column_config.TextColumn("예금주", width="small")
             }
         )
         
-        col_save1, col_save2 = st.columns([1, 3])
-        if col_save1.button("💾 변경사항 동기화 저장", use_container_width=True):
-            # 동기화 로직 (이름 변경 시 연동 데이터 소급 수정)
+        if st.button("💾 변경사항 동기화 저장", use_container_width=True):
+            # [에러 방지 핵심 로직]
             for i, r in ev_v.iterrows():
-                # 기존 데이터와 비교하여 이름이 바뀌었는지 확인
                 target_id = r.get('id')
-                old_row = v_orig[v_orig['id'] == target_id]
-                
-                if not old_row.empty and old_row.iloc[0]['거래처명'] != r['거래처명']:
-                    old_n = old_row.iloc[0]['거래처명']
-                    # 연동된 payments, orders 테이블 일괄 업데이트
-                    supabase.table("payments").update({"거래처명": r['거래처명'], "유형": r['기본유형']}).eq("거래처명", old_n).execute()
-                    supabase.table("orders").update({"거래처명": r['거래처명'], "유형": r['기본유형']}).eq("거래처명", old_n).execute()
+                if target_id: # id가 있는 경우에만 소급 수정 실행
+                    old_row = v_orig[v_orig['id'] == target_id]
+                    if not old_row.empty and old_row.iloc[0]['거래처명'] != r['거래처명']:
+                        old_n = old_row.iloc[0]['거래처명']
+                        supabase.table("payments").update({"거래처명": r['거래처명'], "유형": r['기본유형']}).eq("거래처명", old_n).execute()
+                        supabase.table("orders").update({"거래처명": r['거래처명'], "유형": r['기본유형']}).eq("거래처명", old_n).execute()
             
-            # 최종 마스터 정보 업데이트
             upsert_supabase_data("vendors", ev_v.to_dict(orient='records'))
-            st.success("✅ 거래처 정보 및 과거 내역 동기화가 완료되었습니다."); st.rerun()
+            st.success("✅ 동기화 완료!"); st.rerun()
     else:
-        st.info("📢 등록된 거래처 정보가 없습니다. 신규 거래처를 등록해 주세요.")
+        st.info("📢 등록된 거래처 정보가 없습니다.")
 
 # --- [Tab 4] 환율 분석 (가시성 최적화 및 좌우 대칭 레이아웃) ---
 with tabs[4]:
