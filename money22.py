@@ -257,19 +257,21 @@ with tabs[1]:
         else:
             st.info("💡 등록된 발주 내역이 없습니다. 왼쪽 메뉴를 이용해 주세요.")
             
-# --- [Tab 2] 상세 내역 및 통합 정산 (비율 조정 및 가시성 최적화 버전) ---
+# --- [Tab 2] 상세 내역 및 통합 정산 (최종 검증 및 에러 수정 완료본) ---
 with tabs[2]:
     st.header("📋 상세 내역 및 통합 정산")
     
-    # 데이터 로드
+    # 1. 데이터 로드
     p_all = get_supabase_data("payments")
     o_all = get_supabase_data("orders")
     ex_rates = get_supabase_data("exchange_rates")
     
     if not p_all.empty:
-        p_all['dt'] = pd.to_datetime(p_all['입금일'])
+        # 데이터 전처리: 날짜 형식 안정화 (에러 방지용)
+        p_all['dt'] = pd.to_datetime(p_all['입금일'], errors='coerce')
+        p_all = p_all.dropna(subset=['dt']) # 날짜 형식이 깨진 행은 제외
         
-        # 1. 필터 섹션 (너비 조절을 위해 columns 배치)
+        # 1. 필터 섹션
         f_c1, f_c2, f_c3, f_c4 = st.columns([1, 1, 1, 1.5])
         years = sorted(p_all['dt'].dt.year.unique())
         
@@ -291,7 +293,7 @@ with tabs[2]:
             filtered = filtered[filtered['거래처명'].str.contains(search_key, case=False, na=False) | 
                                filtered['상품명'].str.contains(search_key, case=False, na=False)]
         
-        # 2. 한화 환산 로직 (v136 월평균 환율 적용)
+        # 2. 한화 환산 로직 (v136 원본 로직 유지)
         def get_v136_conversion(row):
             if row['통화'] == '한화': return to_float(row['실입금액'])
             ym_key, curr_key = str(row['입금일'])[:7], row['통화'].lower()
@@ -320,57 +322,57 @@ with tabs[2]:
 
         st.divider()
 
-        # 4. 발주번호별 정산 및 잔액 (가시성 최적화 적용)
+        # 4. 발주번호별 정산 및 잔액 (원본 컬럼 구성 유지)
         st.subheader("🔍 발주별 정산 및 미수금 현황 (전체 기간)")
         pay_agg = p_all.groupby('발주번호').agg({'실입금액':'sum', '선급금액':'sum'}).reset_index()
         settle_df = pd.merge(o_all, pay_agg, on='발주번호', how='left').fillna(0)
         settle_df['잔액'] = settle_df['발주총액'] - (settle_df['실입금액'] + settle_df['선급금액'])
         settle_df['상태'] = settle_df['마감여부'].apply(lambda x: "✅ 마감" if x == 1 else "⏳ 진행")
         
-        # 중요: 표 너비 비율 조정 (column_config)
         st.data_editor(
             settle_df[['발주번호','상태','거래처명','상품명','발주총액','실입금액','잔액','통화']].sort_values('발주번호', ascending=False),
             hide_index=True,
             use_container_width=True,
-            key="settle_editor",
+            key=f"settle_editor_{len(settle_df)}", # 에러 방지용 가변 키
             column_config={
-                "발주번호": st.column_config.TextColumn("발주번호", width="small"),
-                "상태": st.column_config.TextColumn("상태", width="small"),
-                "거래처명": st.column_config.TextColumn("거래처명", width="medium"),
-                "상품명": st.column_config.TextColumn("상품명", width="large"), # 상품명을 넓게
-                "발주총액": st.column_config.NumberColumn("발주총액", format="%.2f", width="medium"),
-                "잔액": st.column_config.NumberColumn("미수잔액", format="%.2f", width="medium"),
-                "통화": st.column_config.TextColumn("통화", width="small")
+                "발주번호": st.column_config.TextColumn("발주번호"),
+                "상태": st.column_config.TextColumn("상태"),
+                "발주총액": st.column_config.NumberColumn("발주총액", format="%.2f"),
+                "잔액": st.column_config.NumberColumn("미수잔액", format="%.2f")
             }
         )
 
         st.divider()
 
-        # 5. 상세 내역 수정 (가시성 최적화 적용)
+        # 5. 상세 내역 수정 (원본 edit_cols 구성 100% 동일)
         st.subheader("📝 상세 내역 수정 및 관리")
         edit_cols = ['id', '유형', '발주번호', '거래처명', '상품명', '입금일', '통화', '실입금액', '선급금액', '한화환산액', '메모']
-        edited_p = st.data_editor(
-            filtered[edit_cols].sort_values('입금일', ascending=False), 
-            hide_index=True, 
-            use_container_width=True,
-            key="detail_editor",
-            column_config={
-                "id": st.column_config.TextColumn("ID", width="small"),
-                "유형": st.column_config.SelectboxColumn("유형", options=CATEGORIES, width="small"),
-                "거래처명": st.column_config.TextColumn("거래처명", width="medium"),
-                "상품명": st.column_config.TextColumn("상품명", width="large"),
-                "입금일": st.column_config.DateColumn("입금일", width="medium"),
-                "한화환산액": st.column_config.NumberColumn("한화환산액(참고)", format="%d", width="medium"),
-                "실입금액": st.column_config.NumberColumn("입금액", format="%.2f", width="medium"),
-                "메모": st.column_config.TextColumn("비고/메모", width="large")
-            }
-        )
         
-        if st.button("💾 수정 내용 클라우드 저장"):
-            upsert_supabase_data("payments", edited_p.to_dict(orient='records'))
-            st.success("수정사항이 클라우드에 안전하게 반영되었습니다."); st.rerun()
+        # [핵심] 에러 방지를 위해 데이터 존재 시에만 정렬/편집기 활성화
+        if not filtered.empty:
+            display_p = filtered[edit_cols].sort_values('입금일', ascending=False)
+            
+            edited_p = st.data_editor(
+                display_p, 
+                hide_index=True, 
+                use_container_width=True,
+                key=f"detail_edit_{len(display_p)}", # 에러 방지용 가변 키
+                column_config={
+                    "id": st.column_config.TextColumn("ID"),
+                    "유형": st.column_config.SelectboxColumn("유형", options=CATEGORIES),
+                    "입금일": st.column_config.DateColumn("입금일"),
+                    "한화환산액": st.column_config.NumberColumn("환산액(참고)", format="%d"),
+                    "실입금액": st.column_config.NumberColumn("입금액", format="%.2f")
+                }
+            )
+            
+            if st.button("💾 수정 내용 클라우드 저장", use_container_width=True):
+                upsert_supabase_data("payments", edited_p.to_dict(orient='records'))
+                st.success("수정사항이 클라우드에 안전하게 반영되었습니다."); st.rerun()
+        else:
+            st.info("조건에 맞는 상세 내역이 없습니다.")
 
-        # 6. 하단 메트릭 요약
+        # 6. 하단 메트릭 요약 (원본 유지)
         st.divider()
         m1, m2, m3 = st.columns(3)
         m1.metric(f"선택 범위 총 환산액", f"{filtered['한화환산액'].sum():,.0f} 원")
@@ -378,7 +380,7 @@ with tabs[2]:
         m3.metric("선택 범위 CNY 합계", f"¥{filtered[filtered['통화']=='CNY']['실입금액'].sum():,.2f}")
     else:
         st.info("데이터가 없습니다. 먼저 입금 내역을 등록해 주세요.")
-
+        
 # --- [Tab 3] 거래처 관리  ---
 with tabs[3]:
     st.header("🏢 거래처 정보 관리")
