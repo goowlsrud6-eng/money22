@@ -171,7 +171,7 @@ with tabs[0]:
                 up_list.append({"id": ids[i], "발주번호": oid_v or None, "입금일": smart_date(r.get('입금일')), "유형": match_o['유형'] if match_o is not None else (to_str(r.get('유형')) or "사입"), "거래처명": vn_f, "상품명": match_o['상품명'] if match_o is not None else to_str(r.get('상품명')), "통화": match_o['통화'] if match_o is not None else "한화", "실입금액": to_float(r.get('실입금액')), "선급금액": to_float(r.get('선급금액')), "메모": to_str(r.get('송금사유')), "은행": vi['은행'] if vi is not None else "", "계좌번호": vi['계좌번호'] if vi is not None else "", "예금주": vi['예금주'] if vi is not None else ""})
             if upsert_supabase_data("payments", up_list): st.session_state.pay_up_key += 1; st.rerun()
 
-# --- [Tab 1] 발주서 등록 및 관리 (문법 오류 제거 및 쉼표/음영 적용) ---
+# --- [Tab 1] 발주서 등록 및 관리 (최종 수정본) ---
 with tabs[1]:
     st.header("📦 발주서 등록 및 마감 관리")
     
@@ -231,14 +231,14 @@ with tabs[1]:
         st.subheader("2. 발주 목록 및 마감 관리")
         
         if not o_data.empty:
-            # 마감 건 숨기기/보여주기 체크박스 [cite: 43]
+            # 마감 건 숨기기/보여주기 체크박스
             show_all = st.checkbox("이미 마감된 발주서까지 모두 보기", value=True)
             
             disp_o = o_data.copy()
             if not show_all:
                 disp_o = disp_o[disp_o['마감여부'] == 0]
             
-            # 행 전체 음영 및 흐림 처리 스타일 함수 [cite: 56, 57]
+            # 행 전체 음영 및 흐림 처리 스타일 함수
             def style_orders_v136(row):
                 if row['마감여부'] == 1:
                     # 행 전체 배경색 회색, 글자색 연회색 처리
@@ -248,7 +248,7 @@ with tabs[1]:
             # 최신 발주일 순으로 정렬
             disp_o = disp_o.sort_values('발주일', ascending=False)
             
-            # 데이터 편집기
+            # 데이터 편집기 (금액 포맷 및 기능 통합)
             ev_o = st.data_editor(
                 disp_o.style.apply(style_orders_v136, axis=1),
                 hide_index=True, 
@@ -256,13 +256,13 @@ with tabs[1]:
                 key=f"ord_editor_v136_{len(disp_o)}",
                 column_config={
                     "마감여부": st.column_config.CheckboxColumn("마감"),
-                    "발주총액": st.column_config.NumberColumn("총액", format="%.2f"),
+                    "발주총액": st.column_config.NumberColumn("총액", format="%,.2f"),
                     "발주차수": st.column_config.TextColumn("차수")
                 },
                 disabled=["발주번호"]
             )
             
-            # 수정 내용 저장 및 소급 적용 [cite: 44, 45, 46]
+            # 수정 내용 저장 및 소급 적용
             if st.button("💾 수정 내용 저장 및 입금내역 소급 적용", use_container_width=True):
                 # 1. Orders 테이블 업데이트
                 upsert_supabase_data("orders", ev_o.to_dict(orient='records'))
