@@ -369,7 +369,7 @@ with tabs[2]:
         edited_p = st.data_editor(
             display_p, hide_index=True, use_container_width=True, key=f"p_edit_v_fin_{len(display_p)}",
             column_config={
-                "삭제": st.column_config.CheckboxColumn("삭제?"),
+                "삭제": st.column_config.CheckboxColumn("삭제"),
                 "실입금액": st.column_config.NumberColumn("실입금액", format="%,.2f"),
                 "선급금액": st.column_config.NumberColumn("선급금액", format="%,.2f"),
                 "한화환산액": st.column_config.NumberColumn("환산액", format="%,d"),
