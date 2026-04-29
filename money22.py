@@ -815,7 +815,7 @@ with tabs[4]:
     st.header("📈 환율 데이터 분석 및 관리")
     
     # -------------------------------
-    # 1. 환율 업로드
+    # 1. 업로드
     # -------------------------------
     def up_ex(u, cur):
         try:
@@ -845,7 +845,7 @@ with tabs[4]:
     st.divider()
 
     # -------------------------------
-    # 2. 분석 영역
+    # 2. 분석
     # -------------------------------
     ex_db = get_supabase_data("exchange_rates")
     
@@ -863,7 +863,7 @@ with tabs[4]:
             
             with target_col:
                 st.subheader(f"💱 {curr.upper()} 분석 리포트")
-                
+
                 # -------------------------------
                 # 📈 차트
                 # -------------------------------
@@ -886,23 +886,43 @@ with tabs[4]:
                     st.plotly_chart(fig, use_container_width=True)
 
                 # -------------------------------
-                # 📊 월별 분석 표 (수정된 핵심)
+                # 📊 월별 분석
                 # -------------------------------
                 m_avg = df_target.groupby(['연도', '월'])[curr].mean().reset_index()
 
                 if not m_avg.empty:
-                    pivot = m_avg.pivot(index='월', columns='연도', values=curr)
+
+                    # 전체 시계열 정렬
+                    m_avg_sorted = m_avg.sort_values(['연도', '월']).copy()
+
+                    # 전월 값
+                    m_avg_sorted['전월값'] = m_avg_sorted[curr].shift(1)
+
+                    # 전월 대비 %
+                    m_avg_sorted['지난달대비(%)'] = (
+                        (m_avg_sorted[curr] - m_avg_sorted['전월값']) /
+                        m_avg_sorted['전월값'].replace(0, np.nan)
+                    ) * 100
+
+                    # pivot 생성
+                    pivot = m_avg_sorted.pivot(index='월', columns='연도', values=curr)
                     pivot.columns = [f"{int(c)}년" for c in pivot.columns]
 
                     c25, c26 = "2025년", "2026년"
 
                     # 전년동월 대비
                     if c25 in pivot.columns and c26 in pivot.columns:
-                        pivot['전년동월대비(%)'] = ((pivot[c26] - pivot[c25]) / pivot[c25]) * 100
+                        pivot['전년동월대비(%)'] = (
+                            (pivot[c26] - pivot[c25]) /
+                            pivot[c25].replace(0, np.nan)
+                        ) * 100
 
-                    # 지난달 대비
-                    if c26 in pivot.columns:
-                        pivot['지난달대비(%)'] = pivot[c26].pct_change() * 100
+                    # index → 컬럼 변환 (중요)
+                    pivot = pivot.reset_index()
+
+                    # 전월대비 merge (2026 기준)
+                    prev_df = m_avg_sorted[m_avg_sorted['연도'] == 2026][['월','지난달대비(%)']]
+                    pivot = pivot.merge(prev_df, on='월', how='left')
 
                     # 컬럼 정리
                     cols = ['월']
@@ -912,11 +932,12 @@ with tabs[4]:
                         cols.append(c26)
                     cols += ['전년동월대비(%)', '지난달대비(%)']
 
-                    pivot = pivot.reset_index()[cols]
+                    pivot = pivot[cols]
 
-                    # 제목 변경
+                    # 제목
                     st.write(f"**{curr.upper()} 월별 환율 추이 분석**")
 
+                    # 출력
                     st.dataframe(
                         pivot.style.format({
                             c25: "{:,.2f}",
@@ -926,6 +947,7 @@ with tabs[4]:
                         }),
                         use_container_width=True
                     )
+
                 else:
                     st.info(f"{curr.upper()} 데이터 부족")
 
