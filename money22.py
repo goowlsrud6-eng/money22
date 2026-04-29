@@ -848,11 +848,15 @@ with tabs[4]:
     ex_db = get_supabase_data("exchange_rates")
     
     if not ex_db.empty:
+        import numpy as np
+
         ex_db['날짜'] = pd.to_datetime(ex_db['날짜'])
         ex_db['연도'] = ex_db['날짜'].dt.year
         ex_db['월'] = ex_db['날짜'].dt.month
 
-        # 🔥 연도 자동 선택 (최근 2개)
+        # -------------------------------
+        # 🔥 최근 2개 연도 자동 선택
+        # -------------------------------
         years = sorted(ex_db['연도'].dropna().unique())
         latest_years = years[-2:]
 
@@ -860,7 +864,9 @@ with tabs[4]:
 
         main_l, main_r = st.columns(2, gap="large")
 
-        # 색상 함수
+        # -------------------------------
+        # 🔥 색상 함수
+        # -------------------------------
         def color_pct(val):
             if pd.isna(val):
                 return ''
@@ -877,7 +883,7 @@ with tabs[4]:
                 st.subheader(f"💱 {curr.upper()} 분석 리포트")
 
                 # -------------------------------
-                # 차트
+                # 📈 차트
                 # -------------------------------
                 chart_df = ex_db[['날짜', curr]].dropna().sort_values('날짜')
 
@@ -898,14 +904,13 @@ with tabs[4]:
                     st.plotly_chart(fig, use_container_width=True)
 
                 # -------------------------------
-                # 월별 분석
+                # 📊 월별 분석
                 # -------------------------------
                 m_avg = df_target.groupby(['연도', '월'])[curr].mean().reset_index()
 
                 if not m_avg.empty:
 
-                    import numpy as np
-
+                    # 전체 시계열 정렬
                     m_avg_sorted = m_avg.sort_values(['연도', '월']).copy()
 
                     # 전월값
@@ -921,7 +926,6 @@ with tabs[4]:
                     pivot = m_avg_sorted.pivot(index='월', columns='연도', values=curr)
                     pivot.columns = [f"{int(c)}년" for c in pivot.columns]
 
-                    # 연도 변수 자동화
                     c1, c2 = [f"{int(y)}년" for y in latest_years]
 
                     # 전년동월
@@ -931,9 +935,10 @@ with tabs[4]:
                             pivot[c1].replace(0, np.nan)
                         ) * 100
 
+                    # index → 컬럼
                     pivot = pivot.reset_index()
 
-                    # 전월대비 merge (최신연도 기준)
+                    # 전월대비 merge
                     prev_df = m_avg_sorted[m_avg_sorted['연도'] == latest_years[-1]][['월','지난달대비(%)']]
                     pivot = pivot.merge(prev_df, on='월', how='left')
 
@@ -949,17 +954,22 @@ with tabs[4]:
 
                     st.write(f"**{curr.upper()} 월별 환율 추이 분석**")
 
-                    # 🔥 안전한 subset 처리
-                    subset_cols = [col for col in ['전년동월대비(%)','지난달대비(%)'] if col in pivot.columns]
-
-                    styled_df = pivot.style.format({
+                    # -------------------------------
+                    # 🔥 스타일 적용 (완전 안전 버전)
+                    # -------------------------------
+                    styled = pivot.style.format({
                         c1: "{:,.2f}",
                         c2: "{:,.2f}",
                         '전년동월대비(%)': "{:.2f}%",
                         '지난달대비(%)': "{:.2f}%",
-                    }).applymap(color_pct, subset=subset_cols)
+                    })
 
-                    st.dataframe(styled_df, use_container_width=True)
+                    subset_cols = [col for col in ['전년동월대비(%)','지난달대비(%)'] if col in pivot.columns]
+
+                    if subset_cols:
+                        styled = styled.applymap(color_pct, subset=subset_cols)
+
+                    st.dataframe(styled, use_container_width=True)
 
                 else:
                     st.info(f"{curr.upper()} 데이터 부족")
@@ -967,7 +977,7 @@ with tabs[4]:
         st.divider()
 
         # -------------------------------
-        # 원본 관리
+        # 🛠️ 원본 관리
         # -------------------------------
         with st.expander("🛠️ 환율 데이터 원본 관리 및 수정"):
             display_db = ex_db.copy().sort_values('날짜', ascending=False)
