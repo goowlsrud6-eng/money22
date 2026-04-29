@@ -171,132 +171,111 @@ with tabs[0]:
                 up_list.append({"id": ids[i], "발주번호": oid_v or None, "입금일": smart_date(r.get('입금일')), "유형": match_o['유형'] if match_o is not None else (to_str(r.get('유형')) or "사입"), "거래처명": vn_f, "상품명": match_o['상품명'] if match_o is not None else to_str(r.get('상품명')), "통화": match_o['통화'] if match_o is not None else "한화", "실입금액": to_float(r.get('실입금액')), "선급금액": to_float(r.get('선급금액')), "메모": to_str(r.get('송금사유')), "은행": vi['은행'] if vi is not None else "", "계좌번호": vi['계좌번호'] if vi is not None else "", "예금주": vi['예금주'] if vi is not None else ""})
             if upsert_supabase_data("payments", up_list): st.session_state.pay_up_key += 1; st.rerun()
 
-# --- [Tab 1] 발주서 등록 및 마감 관리 ---
+# --- [Tab 1] 발주서 등록 및 마감 관리 (100% 완성본) ---
 with tabs[1]:
     st.header("📦 발주서 등록 및 마감 관리")
     
-    # 1. 데이터 로드
+    # 데이터 로드
     v_master = get_supabase_data("vendors")
     o_data = get_supabase_data("orders")
     
     c1, c2 = st.columns([1, 1.8]) 
     
-    # --- 왼쪽: 발주 등록 ---
+    # --- 왼쪽: 발주 등록 섹션 ---
     with c1:
         st.subheader("1. 발주 분석 및 등록")
-
-        o_files = st.file_uploader(
-            "이카운트 엑셀 선택",
-            type=['xlsx'],
-            accept_multiple_files=True,
-            key=f"ord_up_{st.session_state.order_up_key}"
-        )
-
+        o_files = st.file_uploader("이카운트 엑셀 선택", type=['xlsx'], accept_multiple_files=True, 
+                                 key=f"ord_up_{st.session_state.order_up_key}")
         if o_files and st.button("🚀 발주서 일괄 분석 실행", use_container_width=True):
-            for f in o_files:
+            for f in o_files: 
                 success, msg = process_ecount_v136_cloud(f)
-                if not success:
-                    st.error(f"[{f.name}] {msg}")
-            st.session_state.order_up_key += 1
-            st.success("분석 완료!")
-            st.rerun()
-
+                if not success: st.error(f"[{f.name}] {msg}")
+            st.session_state.order_up_key += 1; st.success("분석 완료!"); st.rerun()
+        
         st.divider()
-
-        with st.form("manual_form_v2026_final", clear_on_submit=True):
+        with st.form("manual_form_perfect_final", clear_on_submit=True):
             st.write("**📝 직접 발주 입력**")
-
             m_oid = st.text_input("발주번호 (필수)")
             m_step = st.text_input("발주차수")
-
-            vn_list = ["선택"] + (list(v_master['거래처명'].unique()) if not v_master.empty else [])
+            vn_list = ["선택"] + list(v_master['거래처명'].unique()) if not v_master.empty else ["선택"]
             m_vn = st.selectbox("거래처 선택", vn_list)
-
             m_prod = st.text_input("상품명")
-
             col_m1, col_m2 = st.columns(2)
-            m_amt = col_m1.number_input("발주총액", format="%.2f", step=100.0)
+            m_amt = col_m1.number_input("발주총액", format="%.2f")
             m_cur = col_m2.selectbox("통화", ["한화", "USD", "CNY"])
-
+            
             if st.form_submit_button("➕ 발주 저장", use_container_width=True):
                 if m_oid and m_vn != "선택":
                     v_type = v_master[v_master['거래처명']==m_vn].iloc[0]['기본유형'] if not v_master.empty else "기타"
-
-                    new_order = {
-                        "발주번호": str(m_oid).strip(),
-                        "발주일": datetime.now().strftime("%Y-%m-%d"),
-                        "발주차수": str(m_step).strip(),
-                        "거래처명": str(m_vn).strip(),
-                        "상품명": str(m_prod).strip(),
-                        "유형": v_type,
-                        "발주총액": float(m_amt),
-                        "통화": str(m_cur),
-                        "마감여부": 0
-                    }
-
+                    new_order = {"발주번호": str(m_oid).strip(), "발주일": datetime.now().strftime("%Y-%m-%d"), "발주차수": str(m_step).strip(), "거래처명": str(m_vn).strip(), "상품명": str(m_prod).strip(), "유형": v_type, "발주총액": float(m_amt), "통화": str(m_cur), "마감여부": 0}
                     upsert_supabase_data("orders", new_order)
-                    st.success("등록 완료!")
-                    st.rerun()
+                    st.success("등록 완료!"); st.rerun()
 
-    # --- 오른쪽: 목록 ---
+    # --- 오른쪽: 목록 관리 (최종 보정 로직 반영) ---
     with c2:
         st.subheader("2. 발주 목록 및 마감 관리")
-
         if not o_data.empty:
             show_all = st.checkbox("이미 마감된 발주서까지 모두 보기", value=True)
-
             disp_o = o_data.copy()
-
             if not show_all:
                 disp_o = disp_o[disp_o['마감여부'] == 0]
 
-            # 🔥 핵심: 상태 컬럼 추가 (안정 방식)
-            disp_o['상태'] = disp_o['마감여부'].apply(
-                lambda x: "🔴 마감 완료" if x == 1 else "🟢 진행 중"
-            )
-
-            # 보기 좋게 정렬
+            # 1️⃣ 상태 컬럼 생성 및 정렬
+            disp_o['상태'] = disp_o['마감여부'].apply(lambda x: "🔴 마감 완료" if x == 1 else "🟢 진행 중")
             disp_o = disp_o.sort_values(by=["마감여부", "발주일"], ascending=[True, False])
+            
+            # 2️⃣ [보완] prev_orders 초기화 및 구조 변경 대응
+            base_df = disp_o.drop(columns=['상태']).copy()
+            if "prev_orders" not in st.session_state:
+                st.session_state.prev_orders = base_df
 
+            # 데이터 길이뿐만 아니라 컬럼 구조까지 감시
+            if len(st.session_state.prev_orders) != len(base_df) or \
+               not st.session_state.prev_orders.columns.equals(base_df.columns):
+                st.session_state.prev_orders = base_df
+
+            # 3️⃣ 데이터 에디터 (가변 높이 팁 적용)
             ev_o = st.data_editor(
                 disp_o,
-                hide_index=True,
+                hide_index=True, 
                 use_container_width=True,
-                key=f"editor_final_v28_{len(disp_o)}",
+                height=min(700, 60 + len(disp_o)*35), # 동적 높이 조절
+                key="editor_main_complete",
                 column_config={
                     "상태": st.column_config.TextColumn("상태", width="small"),
                     "마감여부": st.column_config.CheckboxColumn("마감"),
                     "발주총액": st.column_config.NumberColumn("총액", format="%,.2f"),
-                    "발주차수": st.column_config.TextColumn("차수"),
-                    "상품명": st.column_config.TextColumn("상품명", width="large")
+                    "발주차수": st.column_config.TextColumn("차수")
                 },
                 disabled=["상태", "발주번호", "발주일", "유형"]
             )
+            
+            # 4️⃣ 🔥 [보정] 변경 감지 및 플래그 설정
+            current_df = ev_o.drop(columns=['상태']).copy()
+            changed = not current_df.reset_index(drop=True).equals(st.session_state.prev_orders.reset_index(drop=True))
+            
+            if changed:
+                st.session_state.prev_orders = current_df
+                st.session_state.need_rerun = True
 
-            # 🔥 저장 로직 (기존 유지)
+            # 5️⃣ 저장 및 소급 적용
             if st.button("💾 수정 내용 저장 및 입금내역 소급 적용", use_container_width=True):
                 try:
-                    upsert_supabase_data("orders", ev_o.to_dict(orient='records'))
-
+                    final_save = ev_o.drop(columns=['상태'], errors='ignore')
+                    upsert_supabase_data("orders", final_save.to_dict(orient='records'))
+                    
                     for _, r in ev_o.iterrows():
-                        sync_payload = {
-                            "거래처명": str(r['거래처명']).strip(),
-                            "상품명": str(r['상품명']).strip(),
-                            "유형": str(r['유형']).strip(),
-                            "발주차수": str(r['발주차수']).strip()
-                        }
-
-                        supabase.table("payments")\
-                            .update(sync_payload)\
-                            .eq("발주번호", str(r['발주번호']))\
-                            .execute()
-
-                    st.success("✅ 저장 및 소급 적용 완료!")
-                    st.rerun()
-
+                        sync_payload = {"거래처명": str(r['거래처명']).strip(), "상품명": str(r['상품명']).strip(), "유형": str(r['유형']).strip()}
+                        supabase.table("payments").update(sync_payload).eq("발주번호", str(r['발주번호'])).execute()
+                    
+                    st.success("✅ 저장 및 동기화 완료!"); st.rerun()
                 except Exception as e:
-                    st.error(f"저장 오류: {e}")
+                    st.error(f"❌ 저장 오류: {e}")
 
+            # 6️⃣ 🔥 [마무리] 지연된 rerun 실행 (UI 안정성 확보)
+            if st.session_state.get("need_rerun", False):
+                st.session_state.need_rerun = False
+                st.rerun()
         else:
             st.info("내역이 없습니다.")
             
