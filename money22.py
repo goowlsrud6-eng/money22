@@ -489,9 +489,7 @@ with tabs[2]:
 
             p_all = p_all.apply(fill_info, axis=1)
 
-        # -------------------------------
         # 날짜 처리
-        # -------------------------------
         p_all['dt'] = pd.to_datetime(p_all['입금일'], errors='coerce')
         p_all = p_all.dropna(subset=['dt'])
 
@@ -554,10 +552,10 @@ with tabs[2]:
                 filtered['발주차수'].astype(str).str.contains(search_order, case=False, na=False)
             ]
 
-        filtered = filtered.copy()  # ⚠️ apply 안정화
+        filtered = filtered.copy()
 
         # -------------------------------
-        # 💱 환산 (완전 안정화 버전)
+        # 💱 환산
         # -------------------------------
         if not ex_rates.empty:
             ex_rates['ym'] = pd.to_datetime(ex_rates['날짜'], errors='coerce').dt.strftime('%Y-%m')
@@ -575,7 +573,6 @@ with tabs[2]:
 
                     if currency in rate_df.columns:
                         avg = rate_df[currency].mean()
-
                         if pd.notna(avg) and avg > 0:
                             return float(row['실입금액']) * float(avg)
 
@@ -585,7 +582,6 @@ with tabs[2]:
                     return float(row['실입금액']) * 190.0
 
                 return 0
-
             except:
                 return 0
 
@@ -618,8 +614,8 @@ with tabs[2]:
             st.dataframe(
                 summary.style.format({
                     '총발주액': '{:,.0f}',
-                    '총지급액': '{:,.2f}',
-                    '선급금잔액': '{:,.2f}',
+                    '총지급액': '{:,.0f}',
+                    '선급금잔액': '{:,.0f}',
                     '한환산액': '{:,.0f}'
                 }),
                 hide_index=True,
@@ -630,7 +626,7 @@ with tabs[2]:
         st.divider()
 
         # -------------------------------
-        # 📊 발주별 정산
+        # 📊 발주별 정산 (회색 + 색상 적용)
         # -------------------------------
         st.subheader("🔍 발주별 정산 및 미수금 현황")
 
@@ -645,12 +641,31 @@ with tabs[2]:
 
         disp_s = s_df[['발주번호','발주차수','진행상태','거래처명','상품명','발주총액','실입금액','선급금액','미수잔액','통화']]
 
+        def highlight_row(row):
+            style = [''] * len(row)
+
+            # 마감 → 회색 음영
+            if row['진행상태'] == "✅ 마감":
+                style = ['background-color: #f2f2f2; color: #999;'] * len(row)
+
+            # 선급금 > 0 → 빨강
+            if row['선급금액'] > 0:
+                style[row.index.get_loc('선급금액')] = 'color: red;'
+
+            # 미수 > 0 → 파랑
+            if row['미수잔액'] > 0:
+                style[row.index.get_loc('미수잔액')] = 'color: blue;'
+
+            return style
+
         st.dataframe(
-            disp_s.style.format({
-                '발주총액':'{:,.2f}',
-                '실입금액':'{:,.2f}',
-                '선급금액':'{:,.2f}',
-                '미수잔액':'{:,.2f}'
+            disp_s.style
+            .apply(highlight_row, axis=1)
+            .format({
+                '발주총액':'{:,.0f}',
+                '실입금액':'{:,.0f}',
+                '선급금액':'{:,.0f}',
+                '미수잔액':'{:,.0f}'
             }),
             hide_index=True,
             use_container_width=True
@@ -659,20 +674,24 @@ with tabs[2]:
         st.divider()
 
         # -------------------------------
-        # 📝 상세
+        # 📝 상세내역 (쉼표 적용)
         # -------------------------------
         st.subheader("📝 상세 내역 수정/삭제")
 
         filtered['삭제'] = False
 
-        edit_cols = ['삭제','id','유형','발주번호','발주차수','거래처명','상품명','입금일','통화','실입금액','선급금액','한화환산액','메모']
-
-        display_p = filtered[[c for c in edit_cols if c in filtered.columns]].sort_values('입금일', ascending=False)
+        display_p = filtered.sort_values('입금일', ascending=False)
 
         edited_p = st.data_editor(
             display_p,
             hide_index=True,
-            use_container_width=True
+            use_container_width=True,
+            column_config={
+                "삭제": st.column_config.CheckboxColumn("삭제"),
+                "실입금액": st.column_config.NumberColumn("실입금액", format="%,.0f"),
+                "선급금액": st.column_config.NumberColumn("선급금액", format="%,.0f"),
+                "한화환산액": st.column_config.NumberColumn("환산액", format="%,.0f")
+            }
         )
 
         b1, b2 = st.columns(2)
@@ -695,8 +714,8 @@ with tabs[2]:
         m1, m2, m3 = st.columns(3)
 
         m1.metric("총 지급액 (KRW)", f"{filtered['한화환산액'].sum():,.0f} 원")
-        m2.metric("총 지급액 (USD)", f"${filtered[filtered['통화']=='USD']['실입금액'].sum():,.2f}")
-        m3.metric("총 지급액 (CNY)", f"¥{filtered[filtered['통화']=='CNY']['실입금액'].sum():,.2f}")
+        m2.metric("총 지급액 (USD)", f"${filtered[filtered['통화']=='USD']['실입금액'].sum():,.0f}")
+        m3.metric("총 지급액 (CNY)", f"¥{filtered[filtered['통화']=='CNY']['실입금액'].sum():,.0f}")
         
 # --- [Tab 3] 거래처 관리 ---
 with tabs[3]:
