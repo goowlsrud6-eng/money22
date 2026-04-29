@@ -279,17 +279,22 @@ with tabs[1]:
         else:
             st.info("내역이 없습니다.")
             
-# --- [Tab 2] 상세 내역 및 통합 정산 (UI 최적화 및 콤마 적용) ---
+# --- [Tab 2] 상세 내역 및 통합 정산 (좌우 UI 최적화 버전) ---
 with tabs[2]:
     st.header("📋 상세 내역 및 통합 정산")
+
     p_all = get_supabase_data("payments")
     o_all = get_supabase_data("orders")
     ex_rates = get_supabase_data("exchange_rates")
-    
+
     if not p_all.empty:
-        # [데이터 연동] 발주차수 포함
+
+        # -------------------------------
+        # 🔗 발주 데이터 연동
+        # -------------------------------
         if not o_all.empty:
             ref_dict = o_all.set_index('발주번호')[['거래처명', '상품명', '유형', '발주차수']].to_dict('index')
+
             def fill_info(row):
                 oid = row.get('발주번호')
                 if oid in ref_dict:
@@ -298,75 +303,144 @@ with tabs[2]:
                     if not to_str(row.get('유형')): row['유형'] = ref_dict[oid]['유형']
                     row['발주차수'] = ref_dict[oid].get('발주차수', '-')
                 return row
+
             p_all = p_all.apply(fill_info, axis=1)
 
+        # 날짜 처리
         p_all['dt'] = pd.to_datetime(p_all['입금일'], errors='coerce')
         p_all = p_all.dropna(subset=['dt'])
-        
-        # [UI 복구] 한 줄에 모든 필터 배치 (column 비율 조정)
-        f_c1, f_c2, f_c3, f_c4, f_c5 = st.columns([1, 1, 1, 1.2, 1.8])
-        years = sorted(p_all['dt'].dt.year.unique())
-        
-        start_y = f_c1.selectbox("시작 연도", years, index=0)
-        end_y = f_c2.selectbox("종료 연도", years, index=len(years)-1)
-        target_m = f_c3.selectbox("조회 월", ["전체"] + list(range(1, 13)))
-        filter_cat = f_c4.selectbox("유형 필터", ["전체 유형"] + CATEGORIES)
-        search_key = f_c5.text_input("🔍 업체/상품/차수 검색")
-        
-        # 필터링 로직
-        filtered = p_all[(p_all['dt'].dt.year >= start_y) & (p_all['dt'].dt.year <= end_y)].copy()
-        if target_m != "전체": filtered = filtered[filtered['dt'].dt.month == int(target_m)]
-        if filter_cat != "전체 유형": filtered = filtered[filtered['유형'] == filter_cat]
-        if search_key: 
-            filtered = filtered[filtered['거래처명'].str.contains(search_key, case=False, na=False) | 
-                               filtered['상품명'].str.contains(search_key, case=False, na=False) |
-                               filtered['발주차수'].astype(str).str.contains(search_key, case=False, na=False)]
 
-        # [환산 및 요약] 천 단위 쉼표 적용
+        # -------------------------------
+        # 🔥 좌우 레이아웃 (핵심)
+        # -------------------------------
+        left, right = st.columns([1.2, 1])
+
+        # -------------------------------
+        # 🔵 왼쪽: 필터
+        # -------------------------------
+        with left:
+            st.subheader("🔎 필터")
+
+            f1, f2 = st.columns(2)
+            f3, f4 = st.columns(2)
+
+            years = sorted(p_all['dt'].dt.year.unique())
+
+            start_y = f1.selectbox("시작 연도", years, index=0)
+            end_y = f2.selectbox("종료 연도", years, index=len(years)-1)
+
+            target_m = f3.selectbox("조회 월", ["전체"] + list(range(1, 13)))
+            filter_cat = f4.selectbox("유형 필터", ["전체 유형"] + CATEGORIES)
+
+            search_key = st.text_input("🔍 업체/상품/차수 검색")
+
+        # -------------------------------
+        # 🔍 필터 적용
+        # -------------------------------
+        filtered = p_all[(p_all['dt'].dt.year >= start_y) & (p_all['dt'].dt.year <= end_y)].copy()
+
+        if target_m != "전체":
+            filtered = filtered[filtered['dt'].dt.month == int(target_m)]
+
+        if filter_cat != "전체 유형":
+            filtered = filtered[filtered['유형'] == filter_cat]
+
+        if search_key:
+            filtered = filtered[
+                filtered['거래처명'].str.contains(search_key, case=False, na=False) |
+                filtered['상품명'].str.contains(search_key, case=False, na=False) |
+                filtered['발주차수'].astype(str).str.contains(search_key, case=False, na=False)
+            ]
+
+        # -------------------------------
+        # 💱 환산
+        # -------------------------------
         def get_v136_conv(row):
-            if row['통화'] == '한화': return to_float(row['실입금액'])
+            if row['통화'] == '한화':
+                return to_float(row['실입금액'])
+
             ym = str(row['입금일'])[:7]
+
             if not ex_rates.empty:
                 ex_rates['ym'] = pd.to_datetime(ex_rates['날짜']).dt.strftime('%Y-%m')
                 avg = ex_rates[ex_rates['ym'] == ym][str(row['통화']).lower()].mean()
-                if not pd.isna(avg) and avg > 0: return to_float(row['실입금액']) * avg
+                if not pd.isna(avg) and avg > 0:
+                    return to_float(row['실입금액']) * avg
+
             return to_float(row['실입금액']) * (1350.0 if row['통화'] == 'USD' else 190.0)
-        
+
         filtered['한화환산액'] = filtered.apply(get_v136_conv, axis=1)
 
-        st.subheader("📊 필터 요약")
-        summary = filtered.groupby('유형').agg({'실입금액':'sum', '선급금액':'sum', '한화환산액':'sum'}).reset_index()
-        st.table(summary.style.format({'실입금액':'{:,.2f}', '선급금액':'{:,.2f}', '한화환산액':'{:,.0f}'}))
+        # -------------------------------
+        # 🔵 오른쪽: 필터 요약
+        # -------------------------------
+        with right:
+            st.subheader("📊 필터 요약")
+
+            summary = filtered.groupby('유형').agg({
+                '실입금액': 'sum',
+                '선급금액': 'sum',
+                '한화환산액': 'sum'
+            }).reset_index()
+
+            st.dataframe(
+                summary.style.format({
+                    '실입금액': '{:,.2f}',
+                    '선급금액': '{:,.2f}',
+                    '한화환산액': '{:,.0f}'
+                }),
+                hide_index=True,
+                use_container_width=True,
+                height=220
+            )
 
         st.divider()
-        
-        # [정산 현황] 행 전체 음영 및 쉼표 적용
+
+        # -------------------------------
+        # 📊 발주별 정산
+        # -------------------------------
         st.subheader("🔍 발주별 정산 및 미수금 현황")
-        p_agg = p_all.groupby('발주번호').agg({'실입금액':'sum', '선급금액':'sum'}).reset_index()
+
+        p_agg = p_all.groupby('발주번호').agg({
+            '실입금액': 'sum',
+            '선급금액': 'sum'
+        }).reset_index()
+
         s_df = pd.merge(o_all, p_agg, on='발주번호', how='left').fillna(0)
         s_df['미수잔액'] = s_df['발주총액'] - (s_df['실입금액'] + s_df['선급금액'])
         s_df['진행상태'] = s_df['마감여부'].apply(lambda x: "✅ 마감" if x == 1 else "⏳ 진행")
-        
-        def color_row(row):
-            if row['진행상태'] == "✅ 마감": return ['background-color: #f0f2f6; color: #a1a1a1'] * len(row)
-            styles = [''] * len(row)
-            if row['선급금액'] > 0: styles[disp_s.columns.get_loc('선급금액')] = 'color: red; font-weight: bold'
-            if row['미수잔액'] > 0: styles[disp_s.columns.get_loc('미수잔액')] = 'color: blue; font-weight: bold'
-            return styles
 
-        disp_s = s_df[['발주번호','발주차수','진행상태','거래처명','상품명','발주총액','실입금액','선급금액','미수잔액','통화']].sort_values(['진행상태','발주번호'], ascending=[False, False])
-        st.dataframe(disp_s.style.apply(color_row, axis=1).format({'발주총액':'{:,.2f}','실입금액':'{:,.2f}','선급금액':'{:,.2f}','미수잔액':'{:,.2f}'}), hide_index=True, use_container_width=True)
+        disp_s = s_df[['발주번호','발주차수','진행상태','거래처명','상품명','발주총액','실입금액','선급금액','미수잔액','통화']]
+
+        st.dataframe(
+            disp_s.style.format({
+                '발주총액':'{:,.2f}',
+                '실입금액':'{:,.2f}',
+                '선급금액':'{:,.2f}',
+                '미수잔액':'{:,.2f}'
+            }),
+            hide_index=True,
+            use_container_width=True
+        )
 
         st.divider()
-        
-        # [상세 내역] 쉼표 포맷 확실히 적용
+
+        # -------------------------------
+        # 📝 상세 내역
+        # -------------------------------
         st.subheader("📝 상세 내역 수정/삭제")
+
         filtered['삭제'] = False
-        edit_cols = ['삭제', 'id', '유형', '발주번호', '발주차수', '거래처명', '상품명', '입금일', '통화', '실입금액', '선급금액', '한화환산액', '메모']
+
+        edit_cols = ['삭제','id','유형','발주번호','발주차수','거래처명','상품명','입금일','통화','실입금액','선급금액','한화환산액','메모']
+
         display_p = filtered[[c for c in edit_cols if c in filtered.columns]].sort_values('입금일', ascending=False)
-        
+
         edited_p = st.data_editor(
-            display_p, hide_index=True, use_container_width=True, key=f"p_edit_v_fin_{len(display_p)}",
+            display_p,
+            hide_index=True,
+            use_container_width=True,
+            key=f"p_edit_v_final_{len(display_p)}",
             column_config={
                 "삭제": st.column_config.CheckboxColumn("삭제"),
                 "실입금액": st.column_config.NumberColumn("실입금액", format="%,.2f"),
@@ -376,20 +450,26 @@ with tabs[2]:
                 "메모": st.column_config.TextColumn("메모", width="large")
             }
         )
-        
+
         b1, b2 = st.columns(2)
-        if b1.button("💾 상세 수정 저장", key="p_sv_btn", use_container_width=True):
+
+        if b1.button("💾 상세 수정 저장", use_container_width=True):
             to_up = edited_p[edited_p['삭제'] == False].drop(columns=['삭제','발주차수'], errors='ignore')
             upsert_supabase_data("payments", to_up.to_dict(orient='records'))
-            st.success("저장되었습니다."); st.rerun()
-            
-        if b2.button("🗑️ 선택 삭제 실행", key="p_del_btn", use_container_width=True):
+            st.success("저장되었습니다.")
+            st.rerun()
+
+        if b2.button("🗑️ 선택 삭제 실행", use_container_width=True):
             to_del = edited_p[edited_p['삭제'] == True]
-            for tid in to_del['id']: supabase.table("payments").delete().eq("id", tid).execute()
-            st.warning("삭제 완료"); st.rerun()
+            for tid in to_del['id']:
+                supabase.table("payments").delete().eq("id", tid).execute()
+            st.warning("삭제 완료")
+            st.rerun()
 
         st.divider()
+
         m1, m2, m3 = st.columns(3)
+
         m1.metric("총 환산액 합계", f"{filtered['한화환산액'].sum():,.0f} 원")
         m2.metric("USD 실입금 합계", f"${filtered[filtered['통화']=='USD']['실입금액'].sum():,.2f}")
         m3.metric("CNY 실입금 합계", f"¥{filtered[filtered['통화']=='CNY']['실입금액'].sum():,.2f}")
