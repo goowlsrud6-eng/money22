@@ -256,7 +256,7 @@ with tabs[1]:
             )
 
             # 보기 좋게 정렬
-            disp_o = disp_o.sort_values(by=["마감여부", "발주일"], ascending=[False, False])
+            disp_o = disp_o.sort_values(by=["마감여부", "발주일"], ascending=[True, False])
 
             ev_o = st.data_editor(
                 disp_o,
