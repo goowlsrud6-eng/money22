@@ -462,9 +462,9 @@ with tabs[3]:
             use_container_width=True,
             key="vendor_editor_v2",
             column_config={
-                "거래처명": st.column_config.TextColumn("거래처명", width="large"),
+                "거래처명": st.column_config.TextColumn("거래처명", width="sall"),
                 "기본유형": st.column_config.SelectboxColumn("기본 유형", options=CATEGORIES, width="small"),
-                "계좌번호": st.column_config.TextColumn("계좌번호", width="medium"),
+                "계좌번호": st.column_config.TextColumn("계좌번호", width="samll"),
             }
         )
         
