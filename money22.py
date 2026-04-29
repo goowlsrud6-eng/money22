@@ -393,40 +393,54 @@ with tabs[1]:
 
             col_btn1, col_btn2, col_btn3 = st.columns(3)
 
-            # 저장
+            # ✅ 저장
             with col_btn1:
                 if st.button("💾 저장", use_container_width=True):
-                    final_save = ev_o.drop(columns=['상태','삭제'], errors='ignore')
-                    upsert_supabase_data("orders", final_save.to_dict(orient='records'))
 
+                    final_save = ev_o.drop(columns=['상태','삭제'], errors='ignore')
+                    clean_data = final_save.fillna("").to_dict(orient='records')
+
+                    upsert_supabase_data("orders", clean_data)
+
+                    # payments 동기화
                     for _, r in ev_o.iterrows():
                         sync_payload = {
                             "거래처명": str(r['거래처명']).strip(),
                             "상품명": str(r['상품명']).strip(),
                             "유형": str(r['유형']).strip()
                         }
-                        supabase.table("payments").update(sync_payload).eq("발주번호", str(r['발주번호'])).execute()
+
+                        supabase.table("payments")\
+                            .update(sync_payload)\
+                            .eq("발주번호", str(r['발주번호']))\
+                            .execute()
 
                     st.rerun()
 
-            # 삭제
+            # ✅ 삭제 (숨김 처리)
             with col_btn2:
                 if st.button("🗑️ 삭제", use_container_width=True):
                     del_list = ev_o[ev_o['삭제'] == True]
 
                     for oid in del_list['발주번호']:
-                        supabase.table("orders").update({"삭제여부": 1}).eq("발주번호", oid).execute()
+                        supabase.table("orders")\
+                            .update({"삭제여부": 1})\
+                            .eq("발주번호", oid)\
+                            .execute()
 
                     st.rerun()
 
-            # 복구
+            # ✅ 복구
             with col_btn3:
                 if show_deleted:
                     if st.button("♻️ 복구", use_container_width=True):
                         restore_list = ev_o[ev_o['삭제'] == True]
 
                         for oid in restore_list['발주번호']:
-                            supabase.table("orders").update({"삭제여부": 0}).eq("발주번호", oid).execute()
+                            supabase.table("orders")\
+                                .update({"삭제여부": 0})\
+                                .eq("발주번호", oid)\
+                                .execute()
 
                         st.rerun()
 
