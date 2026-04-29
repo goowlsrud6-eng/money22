@@ -363,15 +363,30 @@ with tabs[1]:
         if not o_data.empty:
 
             show_deleted = st.checkbox("삭제된 발주 보기")
+            show_closed = st.checkbox("마감된 발주 포함")
+
             disp_o = o_data.copy()
 
+            # 삭제 필터
             if show_deleted:
                 disp_o = disp_o[disp_o['삭제여부'] == 1]
             else:
                 disp_o = disp_o[disp_o['삭제여부'] == 0]
 
-            disp_o['상태'] = disp_o['마감여부'].apply(lambda x: "🔴" if x == 1 else "🟢")
+            # 마감 필터
+            if not show_closed:
+                disp_o = disp_o[disp_o['마감여부'] == 0]
+
+            # 상태 표시
+            disp_o['상태'] = disp_o.apply(
+                lambda r: "🗑️" if r['삭제여부']==1 else ("🔴" if r['마감여부']==1 else "🟢"),
+                axis=1
+            )
+
             disp_o['삭제'] = False
+
+            # 🔥 삭제여부 컬럼 숨김
+            disp_o = disp_o.drop(columns=['삭제여부'], errors='ignore')
 
             disp_o = disp_o.sort_values(by=["마감여부", "발주일"], ascending=[True, False])
 
@@ -383,7 +398,7 @@ with tabs[1]:
                 key="editor_orders",
                 column_config={
                     "삭제": st.column_config.CheckboxColumn("삭제"),
-                    "상태": st.column_config.TextColumn(""),
+                    "상태": st.column_config.TextColumn("상태", width="small"),
                     "마감여부": st.column_config.CheckboxColumn("마감"),
                     "발주총액": st.column_config.NumberColumn("총액", format="%,.2f"),
                     "발주차수": st.column_config.TextColumn("차수")
@@ -393,7 +408,7 @@ with tabs[1]:
 
             col_btn1, col_btn2, col_btn3 = st.columns(3)
 
-            # ✅ 저장
+            # 저장
             with col_btn1:
                 if st.button("💾 저장", use_container_width=True):
 
@@ -417,7 +432,7 @@ with tabs[1]:
 
                     st.rerun()
 
-            # ✅ 삭제 (숨김 처리)
+            # 삭제
             with col_btn2:
                 if st.button("🗑️ 삭제", use_container_width=True):
                     del_list = ev_o[ev_o['삭제'] == True]
@@ -430,7 +445,7 @@ with tabs[1]:
 
                     st.rerun()
 
-            # ✅ 복구
+            # 복구
             with col_btn3:
                 if show_deleted:
                     if st.button("♻️ 복구", use_container_width=True):
