@@ -469,7 +469,7 @@ with tabs[2]:
 
     p_all = get_supabase_data("payments")
 
-    # 🔥 추가1: 삭제 보기 옵션
+    # 🔥 [추가] 삭제된 내역 보기
     show_deleted = st.checkbox("삭제된 내역 보기")
 
     if not show_deleted and '삭제' in p_all.columns:
@@ -703,7 +703,7 @@ with tabs[2]:
             }
         )
 
-        b1, b2 = st.columns(2)
+        b1, b2, b3 = st.columns(3)
 
         if b1.button("💾 상세 수정 저장", use_container_width=True):
             to_up = edited_p[edited_p['삭제'] == False].drop(columns=['삭제','발주차수'], errors='ignore')
@@ -718,8 +718,7 @@ with tabs[2]:
             st.warning("삭제 완료")
             st.rerun()
 
-        # 🔥 추가2: 복구 버튼
-        if st.button("♻️ 선택 복구 실행", use_container_width=True):
+        if b3.button("♻️ 선택 복구 실행", use_container_width=True):
             to_restore = edited_p[edited_p['삭제'] == True]
             for tid in to_restore['id']:
                 supabase.table("payments").update({"삭제": False}).eq("id", tid).execute()
