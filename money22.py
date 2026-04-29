@@ -394,17 +394,18 @@ with tabs[2]:
         m2.metric("USD 실입금 합계", f"${filtered[filtered['통화']=='USD']['실입금액'].sum():,.2f}")
         m3.metric("CNY 실입금 합계", f"¥{filtered[filtered['통화']=='CNY']['실입금액'].sum():,.2f}")
         
-# --- [Tab 3] 거래처 관리  ---
+# --- [Tab 3] 거래처 관리 ---
 with tabs[3]:
     st.header("🏢 거래처 정보 관리")
     
-    # [보완] 데이터 로드 즉시 오름차순 정렬
+    # 1. 데이터 로드 및 정렬
     v_orig = get_supabase_data("vendors")
     if not v_orig.empty:
         v_orig = v_orig.sort_values('거래처명').reset_index(drop=True)
     
     col_v_in, col_v_csv = st.columns([1.5, 1])
     
+    # --- 상단: 등록 섹션 ---
     with col_v_in:
         st.subheader("1. 신규 거래처 수기 등록")
         with st.form("new_v_form_full", clear_on_submit=True):
@@ -444,11 +445,10 @@ with tabs[3]:
 
     st.divider()
 
-    # 2. 기존 목록 수정 및 검색
+    # --- 하단: 목록 수정 및 검색 (표 크기 최적화 핵심) ---
     if not v_orig.empty:
         st.subheader("📋 등록된 거래처 목록")
         
-        # [추가] 실시간 검색창
         v_search = st.text_input("🔍 거래처 검색 (이름 또는 은행)", placeholder="찾으시는 거래처명을 입력하세요...")
         
         display_v = v_orig.copy()
@@ -456,26 +456,33 @@ with tabs[3]:
             display_v = display_v[display_v['거래처명'].str.contains(v_search, case=False, na=False) | 
                                   display_v['은행'].str.contains(v_search, case=False, na=False)]
 
+        # ✅ [UI 최적화] 데이터 양에 따른 가변 높이 설정
+        # 헤더(약 40px) + 행당(약 35px). 최대 600px까지만 확장
+        v_height = min(600, 45 + len(display_v) * 37)
+
         ev_v = st.data_editor(
             display_v, 
             hide_index=True, 
             use_container_width=True,
+            height=v_height,  # 🔥 표가 너무 커지지 않게 자동 조절
             key="vendor_editor_v2",
             column_config={
-                "거래처명": st.column_config.TextColumn("거래처명", width="sall"),
+                "거래처명": st.column_config.TextColumn("거래처명", width="medium"), # width 오타 수정
                 "기본유형": st.column_config.SelectboxColumn("기본 유형", options=CATEGORIES, width="small"),
-                "계좌번호": st.column_config.TextColumn("계좌번호", width="samll"),
+                "은행": st.column_config.TextColumn("은행", width="small"),
+                "계좌번호": st.column_config.TextColumn("계좌번호", width="medium"), # width 오타 수정
+                "예금주": st.column_config.TextColumn("예금주", width="small"),
             }
         )
         
         if st.button("💾 변경사항 동기화 저장", use_container_width=True):
-            # [에러 방지 핵심 로직]
             for i, r in ev_v.iterrows():
                 target_id = r.get('id')
-                if target_id: # id가 있는 경우에만 소급 수정 실행
+                if target_id:
                     old_row = v_orig[v_orig['id'] == target_id]
                     if not old_row.empty and old_row.iloc[0]['거래처명'] != r['거래처명']:
                         old_n = old_row.iloc[0]['거래처명']
+                        # 연관 테이블(payments, orders) 동기화
                         supabase.table("payments").update({"거래처명": r['거래처명'], "유형": r['기본유형']}).eq("거래처명", old_n).execute()
                         supabase.table("orders").update({"거래처명": r['거래처명'], "유형": r['기본유형']}).eq("거래처명", old_n).execute()
             
