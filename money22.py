@@ -523,7 +523,7 @@ with tabs[2]:
             search_order = st.text_input("🔍 발주차수 검색")
 
         # -------------------------------
-        # ✅ 월 필터 (핵심 수정)
+        # 월 필터
         # -------------------------------
         start_date = pd.to_datetime(f"{start_y}-{start_m:02d}-01")
         end_date = pd.to_datetime(f"{end_y}-{end_m:02d}-01") + pd.offsets.MonthEnd(1)
@@ -533,7 +533,6 @@ with tabs[2]:
             (p_all['dt'] <= end_date)
         ].copy()
 
-        # 나머지 필터
         if filter_cat != "전체 유형":
             filtered = filtered[filtered['유형'] == filter_cat]
 
@@ -671,13 +670,19 @@ with tabs[2]:
         st.divider()
 
         # -------------------------------
-        # 📝 상세내역 (쉼표 유지)
+        # 📝 상세 내역 수정/삭제 (여기만 변경)
         # -------------------------------
         st.subheader("📝 상세 내역 수정/삭제")
 
         filtered['삭제'] = False
 
-        display_p = filtered.sort_values('입금일', ascending=False)
+        display_cols = [
+            'id','발주번호','발주차수','유형','거래처명','상품명',
+            '통화','입금일','실입금액','선급금액','한화환산액','송금사유','삭제'
+        ]
+        display_cols = [col for col in display_cols if col in filtered.columns]
+
+        display_p = filtered[display_cols].sort_values('입금일', ascending=False)
 
         edited_p = st.data_editor(
             display_p,
