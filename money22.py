@@ -494,7 +494,7 @@ with tabs[2]:
         p_all = p_all.dropna(subset=['dt'])
 
         # -------------------------------
-        # 🔥 좌우 레이아웃 (핵심)
+        # 🔥 좌우 레이아웃
         # -------------------------------
         left, right = st.columns([1.2, 1])
 
@@ -512,27 +512,47 @@ with tabs[2]:
             start_y = f1.selectbox("시작 연도", years, index=0)
             end_y = f2.selectbox("종료 연도", years, index=len(years)-1)
 
-            target_m = f3.selectbox("조회 월", ["전체"] + list(range(1, 13)))
-            filter_cat = f4.selectbox("유형 필터", ["전체 유형"] + CATEGORIES)
+            # ✅ 월 범위 선택
+            start_m = f3.selectbox("시작 월", list(range(1, 13)), index=0)
+            end_m = f4.selectbox("종료 월", list(range(1, 13)), index=11)
 
-            search_key = st.text_input("🔍 업체/상품/차수 검색")
+            filter_cat = st.selectbox("유형 필터", ["전체 유형"] + CATEGORIES)
+
+            # ✅ 검색 분리
+            search_vendor = st.text_input("🔍 업체 검색")
+            search_product = st.text_input("🔍 상품 검색")
+            search_order = st.text_input("🔍 발주차수 검색")
 
         # -------------------------------
         # 🔍 필터 적용
         # -------------------------------
-        filtered = p_all[(p_all['dt'].dt.year >= start_y) & (p_all['dt'].dt.year <= end_y)].copy()
+        filtered = p_all[
+            (p_all['dt'].dt.year >= start_y) &
+            (p_all['dt'].dt.year <= end_y)
+        ].copy()
 
-        if target_m != "전체":
-            filtered = filtered[filtered['dt'].dt.month == int(target_m)]
+        # 월 범위 필터
+        filtered = filtered[
+            (filtered['dt'].dt.month >= start_m) &
+            (filtered['dt'].dt.month <= end_m)
+        ]
 
         if filter_cat != "전체 유형":
             filtered = filtered[filtered['유형'] == filter_cat]
 
-        if search_key:
+        if search_vendor:
             filtered = filtered[
-                filtered['거래처명'].str.contains(search_key, case=False, na=False) |
-                filtered['상품명'].str.contains(search_key, case=False, na=False) |
-                filtered['발주차수'].astype(str).str.contains(search_key, case=False, na=False)
+                filtered['거래처명'].str.contains(search_vendor, case=False, na=False)
+            ]
+
+        if search_product:
+            filtered = filtered[
+                filtered['상품명'].str.contains(search_product, case=False, na=False)
+            ]
+
+        if search_order:
+            filtered = filtered[
+                filtered['발주차수'].astype(str).str.contains(search_order, case=False, na=False)
             ]
 
         # -------------------------------
@@ -560,17 +580,31 @@ with tabs[2]:
         with right:
             st.subheader("📊 필터 요약")
 
+            # 발주총액 가져오기
+            order_sum = o_all.groupby('유형')['발주총액'].sum().reset_index()
+
             summary = filtered.groupby('유형').agg({
                 '실입금액': 'sum',
                 '선급금액': 'sum',
                 '한화환산액': 'sum'
             }).reset_index()
 
+            summary = pd.merge(summary, order_sum, on='유형', how='left').fillna(0)
+
+            summary['총지급액'] = summary['실입금액'] + summary['선급금액']
+            summary['선급금잔액'] = summary['발주총액'] - summary['총지급액']
+
+            summary = summary.rename(columns={
+                '발주총액': '총발주액',
+                '한화환산액': '한환산액'
+            })[['유형','총발주액','총지급액','선급금잔액','한환산액']]
+
             st.dataframe(
                 summary.style.format({
-                    '실입금액': '{:,.2f}',
-                    '선급금액': '{:,.2f}',
-                    '한화환산액': '{:,.0f}'
+                    '총발주액': '{:,.0f}',
+                    '총지급액': '{:,.2f}',
+                    '선급금잔액': '{:,.2f}',
+                    '한환산액': '{:,.0f}'
                 }),
                 hide_index=True,
                 use_container_width=True,
@@ -653,9 +687,10 @@ with tabs[2]:
 
         m1, m2, m3 = st.columns(3)
 
-        m1.metric("총 환산액 합계", f"{filtered['한화환산액'].sum():,.0f} 원")
-        m2.metric("USD 실입금 합계", f"${filtered[filtered['통화']=='USD']['실입금액'].sum():,.2f}")
-        m3.metric("CNY 실입금 합계", f"¥{filtered[filtered['통화']=='CNY']['실입금액'].sum():,.2f}")
+        # ✅ Metric 수정
+        m1.metric("총 지급액 (KRW)", f"{filtered['한화환산액'].sum():,.0f} 원")
+        m2.metric("총 지급액 (USD)", f"${filtered[filtered['통화']=='USD']['실입금액'].sum():,.2f}")
+        m3.metric("총 지급액 (CNY)", f"¥{filtered[filtered['통화']=='CNY']['실입금액'].sum():,.2f}")
         
 # --- [Tab 3] 거래처 관리 ---
 with tabs[3]:
