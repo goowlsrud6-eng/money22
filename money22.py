@@ -469,9 +469,6 @@ with tabs[2]:
 
     p_all = get_supabase_data("payments")
 
-    # 🔥 [추가] 삭제된 내역 보기
-    show_deleted = st.checkbox("삭제된 내역 보기")
-
     if not show_deleted and '삭제' in p_all.columns:
         p_all = p_all[p_all['삭제'] != True]
 
@@ -680,7 +677,8 @@ with tabs[2]:
         # 📝 상세 내역
         # -------------------------------
         st.subheader("📝 입금 상세 내역")
-
+    # 🔥 [추가] 삭제된 내역 보기
+    show_deleted = st.checkbox("삭제된 내역 보기")
         filtered['삭제'] = False
 
         display_cols = [
