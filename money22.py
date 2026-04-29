@@ -36,9 +36,22 @@ def get_supabase_data(table_name):
 def upsert_supabase_data(table_name, data):
     """데이터 저장 및 수정 (Upsert)"""
     try:
-        if not data: return True
+        if not data:
+            return True
+
+        # 🔥 핵심: dict → list 자동 변환
+        if isinstance(data, dict):
+            data = [data]
+
+        # 🔥 (선택) None 값 안전 처리
+        data = [
+            {k: ("" if v is None else v) for k, v in row.items()}
+            for row in data
+        ]
+
         supabase.table(table_name).upsert(data).execute()
         return True
+
     except Exception as e:
         st.error(f"{table_name} 저장 실패: {e}")
         return False
