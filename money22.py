@@ -673,63 +673,74 @@ with tabs[2]:
 
         st.divider()
 
-        # -------------------------------
-        # 📝 상세 내역
-        # -------------------------------
-        st.subheader("📝 입금 상세 내역")
-    # 🔥 [추가] 삭제된 내역 보기
-    show_deleted = st.checkbox("삭제된 내역 보기")
-        filtered['삭제'] = False
+     # -------------------------------
+# 📝 상세 내역
+# -------------------------------
+st.subheader("📝 입금 상세 내역")
 
-        display_cols = [
-            'id','발주번호','발주차수','유형','거래처명','상품명',
-            '통화','입금일','실입금액','선급금액','한화환산액','송금사유','삭제'
-        ]
-        display_cols = [col for col in display_cols if col in filtered.columns]
+# 🔥 삭제된 내역 보기 (위치 여기로)
+show_deleted = st.checkbox("삭제된 내역 보기")
 
-        display_p = filtered[display_cols].sort_values('입금일', ascending=False)
+# 🔥 삭제 컬럼 없을 때만 생성 (중요)
+if '삭제' not in filtered.columns:
+    filtered['삭제'] = False
 
-        edited_p = st.data_editor(
-            display_p,
-            hide_index=True,
-            use_container_width=True,
-            column_config={
-                "삭제": st.column_config.CheckboxColumn("삭제"),
-                "실입금액": st.column_config.NumberColumn("실입금액", format="%,.0f"),
-                "선급금액": st.column_config.NumberColumn("선급금액", format="%,.0f"),
-                "한화환산액": st.column_config.NumberColumn("환산액", format="%,.0f")
-            }
-        )
+# 🔥 삭제 숨김 처리
+if not show_deleted:
+    filtered = filtered[filtered['삭제'] != True]
 
-        b1, b2, b3 = st.columns(3)
+# 🔥 상태 표시 (삭제 구분용)
+filtered['상태'] = filtered['삭제'].apply(lambda x: '삭제됨' if x else '')
 
-        if b1.button("💾 상세 수정 저장", use_container_width=True):
-            to_up = edited_p[edited_p['삭제'] == False].drop(columns=['삭제','발주차수'], errors='ignore')
-            upsert_supabase_data("payments", to_up.to_dict(orient='records'))
-            st.success("저장되었습니다.")
-            st.rerun()
+display_cols = [
+    '상태','id','발주번호','발주차수','유형','거래처명','상품명',
+    '통화','입금일','실입금액','선급금액','한화환산액','송금사유','삭제'
+]
+display_cols = [col for col in display_cols if col in filtered.columns]
 
-        if b2.button("🗑️ 선택 삭제 실행", use_container_width=True):
-            to_del = edited_p[edited_p['삭제'] == True]
-            for tid in to_del['id']:
-                supabase.table("payments").update({"삭제": True}).eq("id", tid).execute()
-            st.warning("삭제 완료")
-            st.rerun()
+display_p = filtered[display_cols].sort_values('입금일', ascending=False)
 
-        if b3.button("♻️ 선택 복구 실행", use_container_width=True):
-            to_restore = edited_p[edited_p['삭제'] == True]
-            for tid in to_restore['id']:
-                supabase.table("payments").update({"삭제": False}).eq("id", tid).execute()
-            st.success("복구 완료")
-            st.rerun()
+edited_p = st.data_editor(
+    display_p,
+    hide_index=True,
+    use_container_width=True,
+    column_config={
+        "삭제": st.column_config.CheckboxColumn("삭제"),
+        "실입금액": st.column_config.NumberColumn("실입금액", format="%,.0f"),
+        "선급금액": st.column_config.NumberColumn("선급금액", format="%,.0f"),
+        "한화환산액": st.column_config.NumberColumn("환산액", format="%,.0f")
+    }
+)
 
-        st.divider()
+b1, b2, b3 = st.columns(3)
 
-        m1, m2, m3 = st.columns(3)
+if b1.button("💾 상세 수정 저장", use_container_width=True):
+    to_up = edited_p[edited_p['삭제'] == False].drop(columns=['삭제','발주차수','상태'], errors='ignore')
+    upsert_supabase_data("payments", to_up.to_dict(orient='records'))
+    st.success("저장되었습니다.")
+    st.rerun()
 
-        m1.metric("총 지급액 (KRW)", f"{filtered['한화환산액'].sum():,.0f} 원")
-        m2.metric("총 지급액 (USD)", f"${filtered[filtered['통화']=='USD']['실입금액'].sum():,.0f}")
-        m3.metric("총 지급액 (CNY)", f"¥{filtered[filtered['통화']=='CNY']['실입금액'].sum():,.0f}")
+if b2.button("🗑️ 선택 삭제 실행", use_container_width=True):
+    to_del = edited_p[edited_p['삭제'] == True]
+    for tid in to_del['id']:
+        supabase.table("payments").update({"삭제": True}).eq("id", tid).execute()
+    st.warning("삭제 완료")
+    st.rerun()
+
+if b3.button("♻️ 선택 복구 실행", use_container_width=True):
+    to_restore = edited_p[edited_p['삭제'] == True]
+    for tid in to_restore['id']:
+        supabase.table("payments").update({"삭제": False}).eq("id", tid).execute()
+    st.success("복구 완료")
+    st.rerun()
+
+st.divider()
+
+m1, m2, m3 = st.columns(3)
+
+m1.metric("총 지급액 (KRW)", f"{filtered['한화환산액'].sum():,.0f} 원")
+m2.metric("총 지급액 (USD)", f"${filtered[filtered['통화']=='USD']['실입금액'].sum():,.0f}")
+m3.metric("총 지급액 (CNY)", f"¥{filtered[filtered['통화']=='CNY']['실입금액'].sum():,.0f}") 
         
 # --- [Tab 3] 거래처 관리 ---
 with tabs[3]:
