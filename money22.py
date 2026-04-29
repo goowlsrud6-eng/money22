@@ -679,12 +679,7 @@ with tabs[2]:
         if '삭제' not in filtered.columns:
             filtered['삭제'] = False
 
-        # 🔥 핵심: 화면용 따로
-        display_df = filtered.copy()
-
-        if not show_deleted:
-            display_df = display_df[display_df['삭제'] != True]
-
+        # 삭제 상태 표시
         filtered['상태'] = filtered['삭제'].apply(lambda x: '삭제됨' if x else '')
 
         display_cols = [
@@ -693,7 +688,12 @@ with tabs[2]:
         ]
         display_cols = [col for col in display_cols if col in filtered.columns]
 
-        display_p = display_df[display_cols].sort_values('입금일', ascending=False)
+        # 🔥 핵심: filtered 그대로 사용
+        display_p = filtered[display_cols].sort_values('입금일', ascending=False)
+
+        # 🔥 삭제 숨김 (여기서만)
+        if not show_deleted:
+            display_p = display_p[display_p['삭제'] != True]
 
         edited_p = st.data_editor(
             display_p,
@@ -736,7 +736,7 @@ with tabs[2]:
         m1.metric("총 지급액 (KRW)", f"{filtered['한화환산액'].sum():,.0f} 원")
         m2.metric("총 지급액 (USD)", f"${filtered[filtered['통화']=='USD']['실입금액'].sum():,.0f}")
         m3.metric("총 지급액 (CNY)", f"¥{filtered[filtered['통화']=='CNY']['실입금액'].sum():,.0f}")
-
+        
 # --- [Tab 3] 거래처 관리 ---
 with tabs[3]:
     st.header("🏢 거래처 정보 관리")
