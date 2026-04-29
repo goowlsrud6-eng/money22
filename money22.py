@@ -893,6 +893,8 @@ with tabs[4]:
 
                 if not m_avg.empty:
 
+                    import numpy as np  # 안전하게 여기서도 선언
+
                     # 전체 시계열 정렬
                     m_avg_sorted = m_avg.sort_values(['연도', '월']).copy()
 
@@ -918,10 +920,10 @@ with tabs[4]:
                             pivot[c25].replace(0, np.nan)
                         ) * 100
 
-                    # index → 컬럼 변환 (중요)
+                    # index → 컬럼
                     pivot = pivot.reset_index()
 
-                    # 전월대비 merge (2026 기준)
+                    # 전월대비 merge
                     prev_df = m_avg_sorted[m_avg_sorted['연도'] == 2026][['월','지난달대비(%)']]
                     pivot = pivot.merge(prev_df, on='월', how='left')
 
@@ -938,13 +940,13 @@ with tabs[4]:
                     # 제목
                     st.write(f"**{curr.upper()} 월별 환율 추이 분석**")
 
-                    # 출력
+                    # 출력 (🔥 퍼센트 적용)
                     st.dataframe(
                         pivot.style.format({
                             c25: "{:,.2f}",
                             c26: "{:,.2f}",
-                            '전년동월대비(%)': "{:.2f}",
-                            '지난달대비(%)': "{:.2f}",
+                            '전년동월대비(%)': "{:.2f}%",
+                            '지난달대비(%)': "{:.2f}%",
                         }),
                         use_container_width=True
                     )
