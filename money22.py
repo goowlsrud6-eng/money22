@@ -940,15 +940,26 @@ with tabs[4]:
                     # 제목
                     st.write(f"**{curr.upper()} 월별 환율 추이 분석**")
 
-                    # 출력 (🔥 퍼센트 적용)
-                    st.dataframe(
-                        pivot.style.format({
-                            c25: "{:,.2f}",
-                            c26: "{:,.2f}",
-                            '전년동월대비(%)': "{:.2f}%",
-                            '지난달대비(%)': "{:.2f}%",
-                        }),
-                        use_container_width=True
+                    def color_pct(val):
+    if pd.isna(val):
+        return ''
+    if val > 0:
+        return 'color: blue;'   # 상승
+    elif val < 0:
+        return 'color: red;'    # 하락
+    return ''
+
+st.dataframe(
+    pivot.style
+    .format({
+        c25: "{:,.2f}",
+        c26: "{:,.2f}",
+        '전년동월대비(%)': "{:.2f}%",
+        '지난달대비(%)': "{:.2f}%",
+    })
+    .applymap(color_pct, subset=['전년동월대비(%)','지난달대비(%)']),
+    use_container_width=True
+)
                     )
 
                 else:
