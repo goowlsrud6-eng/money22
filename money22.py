@@ -469,8 +469,10 @@ with tabs[2]:
 
     p_all = get_supabase_data("payments")
 
-    # 🔥 추가 1: 삭제된 데이터 숨김
-    if '삭제' in p_all.columns:
+    # 🔥 추가1: 삭제 보기 옵션
+    show_deleted = st.checkbox("삭제된 내역 보기")
+
+    if not show_deleted and '삭제' in p_all.columns:
         p_all = p_all[p_all['삭제'] != True]
 
     o_all = get_supabase_data("orders")
@@ -675,7 +677,7 @@ with tabs[2]:
         st.divider()
 
         # -------------------------------
-        # 📝 상세내역
+        # 📝 상세 내역
         # -------------------------------
         st.subheader("📝 입금 상세 내역")
 
@@ -712,9 +714,16 @@ with tabs[2]:
         if b2.button("🗑️ 선택 삭제 실행", use_container_width=True):
             to_del = edited_p[edited_p['삭제'] == True]
             for tid in to_del['id']:
-                # 🔥 수정된 부분 (delete → update)
                 supabase.table("payments").update({"삭제": True}).eq("id", tid).execute()
             st.warning("삭제 완료")
+            st.rerun()
+
+        # 🔥 추가2: 복구 버튼
+        if st.button("♻️ 선택 복구 실행", use_container_width=True):
+            to_restore = edited_p[edited_p['삭제'] == True]
+            for tid in to_restore['id']:
+                supabase.table("payments").update({"삭제": False}).eq("id", tid).execute()
+            st.success("복구 완료")
             st.rerun()
 
         st.divider()
