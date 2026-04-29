@@ -810,11 +810,13 @@ with tabs[3]:
     else:
         st.info("📢 등록된 거래처 정보가 없습니다.")
 
-# --- [Tab 4] 환율 분석 (가시성 최적화 및 좌우 대칭 레이아웃) ---
+# --- [Tab 4] 환율 분석 ---
 with tabs[4]:
     st.header("📈 환율 데이터 분석 및 관리")
     
-    # 1. 환율 데이터 업로드 섹션
+    # -------------------------------
+    # 1. 환율 업로드
+    # -------------------------------
     def up_ex(u, cur):
         try:
             df_ex = pd.read_csv(u)
@@ -834,6 +836,7 @@ with tabs[4]:
         u_u = st.file_uploader("USD CSV 업로드", type=['csv'], key="usd_up")
         if u_u and st.button("USD 데이터 동기화", use_container_width=True):
             up_ex(u_u, "USD"); st.rerun()
+
     with up_c2:
         u_c = st.file_uploader("CNY CSV 업로드", type=['csv'], key="cny_up")
         if u_c and st.button("CNY 데이터 동기화", use_container_width=True):
@@ -841,17 +844,19 @@ with tabs[4]:
 
     st.divider()
 
-    # 2. 메인 분석 영역 (좌 USD / 우 CNY 대칭 구조)
+    # -------------------------------
+    # 2. 분석 영역
+    # -------------------------------
     ex_db = get_supabase_data("exchange_rates")
     
     if not ex_db.empty:
         ex_db['날짜'] = pd.to_datetime(ex_db['날짜'])
         ex_db['연도'] = ex_db['날짜'].dt.year
         ex_db['월'] = ex_db['날짜'].dt.month
+
         df_target = ex_db[ex_db['연도'].isin([2025, 2026])]
 
-        # 가시성을 위해 좌우 여백을 살짝 둔 2컬럼 레이아웃
-        main_l, main_r = st.columns([1, 1], gap="large")
+        main_l, main_r = st.columns(2, gap="large")
 
         for i, curr in enumerate(['usd', 'cny']):
             target_col = main_l if i == 0 else main_r
@@ -859,76 +864,100 @@ with tabs[4]:
             with target_col:
                 st.subheader(f"💱 {curr.upper()} 분석 리포트")
                 
-                # [상단] 차트 배치 (정렬로 꼬임 방지)
+                # -------------------------------
+                # 📈 차트
+                # -------------------------------
                 chart_df = ex_db[['날짜', curr]].dropna().sort_values('날짜')
+
                 if not chart_df.empty:
                     fig = go.Figure()
                     fig.add_trace(go.Scatter(
-                        x=chart_df['날짜'], 
-                        y=chart_df[curr], 
+                        x=chart_df['날짜'],
+                        y=chart_df[curr],
                         mode='lines',
                         line=dict(color='blue' if curr=='usd' else 'red', width=2)
                     ))
                     fig.update_layout(
-                        height=250, 
-                        margin=dict(l=0, r=0, t=10, b=0), 
+                        height=250,
+                        margin=dict(l=0, r=0, t=10, b=0),
                         showlegend=False,
                         hovermode="x unified"
                     )
                     st.plotly_chart(fig, use_container_width=True)
-                
-                # [하단] 월별 평균 비교표 (가시성 최적화)
+
+                # -------------------------------
+                # 📊 월별 분석 표 (수정된 핵심)
+                # -------------------------------
                 m_avg = df_target.groupby(['연도', '월'])[curr].mean().reset_index()
+
                 if not m_avg.empty:
                     pivot = m_avg.pivot(index='월', columns='연도', values=curr)
                     pivot.columns = [f"{int(c)}년" for c in pivot.columns]
-                    
-                    # 증감 로직
+
                     c25, c26 = "2025년", "2026년"
+
+                    # 전년동월 대비
                     if c25 in pivot.columns and c26 in pivot.columns:
-                        pivot['증감'] = pivot[c26] - pivot[c25]
-                        pivot['%'] = (pivot['증감'] / pivot[c25] * 100)
-                    
-                    st.write(f"**{curr.upper()} 월별 평균 대조**")
-                    # 표가 너무 가로로 찢어지지 않도록 설정
+                        pivot['전년동월대비(%)'] = ((pivot[c26] - pivot[c25]) / pivot[c25]) * 100
+
+                    # 지난달 대비
+                    if c26 in pivot.columns:
+                        pivot['지난달대비(%)'] = pivot[c26].pct_change() * 100
+
+                    # 컬럼 정리
+                    cols = ['월']
+                    if c25 in pivot.columns:
+                        cols.append(c25)
+                    if c26 in pivot.columns:
+                        cols.append(c26)
+                    cols += ['전년동월대비(%)', '지난달대비(%)']
+
+                    pivot = pivot.reset_index()[cols]
+
+                    # 제목 변경
+                    st.write(f"**{curr.upper()} 월별 환율 추이 분석**")
+
                     st.dataframe(
-                        pivot.sort_index().style.format("{:,.2f}"),
-                        use_container_width=True,
-                        column_config={
-                            "월": st.column_config.TextColumn("월", width="small"),
-                            "2025년": st.column_config.NumberColumn("25년", width="small"),
-                            "2026년": st.column_config.NumberColumn("26년", width="small"),
-                        }
+                        pivot.style.format({
+                            c25: "{:,.2f}",
+                            c26: "{:,.2f}",
+                            '전년동월대비(%)': "{:.2f}",
+                            '지난달대비(%)': "{:.2f}",
+                        }),
+                        use_container_width=True
                     )
                 else:
                     st.info(f"{curr.upper()} 데이터 부족")
 
         st.divider()
-        
-        # 3. 데이터 원본 관리
+
+        # -------------------------------
+        # 🛠️ 원본 관리
+        # -------------------------------
         with st.expander("🛠️ 환율 데이터 원본 관리 및 수정"):
-            sub_c1, sub_c2, sub_c3 = st.columns([0.1, 0.8, 0.1])
-            with sub_c2:
-                display_db = ex_db.copy().sort_values('날짜', ascending=False)
-                display_db['날짜'] = display_db['날짜'].dt.strftime('%Y-%m-%d')
-                cols = [c for c in ['날짜', 'usd', 'cny'] if c in display_db.columns]
-                
-                edited_ex = st.data_editor(
-                    display_db[cols], 
-                    hide_index=True, 
-                    use_container_width=True,
-                    column_config={
-                        "날짜": st.column_config.TextColumn("날짜", width="medium"),
-                        "usd": st.column_config.NumberColumn("USD", format="%.2f", width="small"),
-                        "cny": st.column_config.NumberColumn("CNY", format="%.2f", width="small")
-                    }
-                )
-                
-                if st.button("💾 수정 내용 저장", use_container_width=True):
-                    try:
-                        upsert_supabase_data("exchange_rates", edited_ex.to_dict(orient='records'))
-                        st.success("저장 완료!"); st.rerun()
-                    except Exception as e:
-                        st.error(f"저장 실패: {e}")
+            display_db = ex_db.copy().sort_values('날짜', ascending=False)
+            display_db['날짜'] = display_db['날짜'].dt.strftime('%Y-%m-%d')
+
+            cols = [c for c in ['날짜', 'usd', 'cny'] if c in display_db.columns]
+
+            edited_ex = st.data_editor(
+                display_db[cols],
+                hide_index=True,
+                use_container_width=True,
+                column_config={
+                    "날짜": st.column_config.TextColumn("날짜"),
+                    "usd": st.column_config.NumberColumn("USD", format="%.2f"),
+                    "cny": st.column_config.NumberColumn("CNY", format="%.2f")
+                }
+            )
+
+            if st.button("💾 수정 내용 저장", use_container_width=True):
+                try:
+                    upsert_supabase_data("exchange_rates", edited_ex.to_dict(orient='records'))
+                    st.success("저장 완료!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"저장 실패: {e}")
+
     else:
         st.info("환율 데이터를 업로드해 주세요.")
