@@ -463,7 +463,7 @@ with tabs[1]:
         else:
             st.info("내역 없음")
 
---- [Tab 2] 상세 내역 및 통합 정산 ---
+# --- [Tab 2] 상세 내역 및 통합 정산 ---
 with tabs[2]:
     st.header("📋 상세 내역 및 통합 정산")
     p_all = get_supabase_data("payments")
@@ -686,10 +686,10 @@ with tabs[2]:
         ]
         display_cols = [col for col in display_cols if col in filtered.columns]
 
-        # 🔥 수정 사항 반영을 위해 sort_values 후 인덱스 재설정 생략 (정렬은 유지)
+        # 정렬 유지
         display_p = filtered[display_cols].sort_values('입금일', ascending=False)
 
-        # 🔥 삭제 숨김 (여기서만)
+        # 삭제 숨김
         if not show_deleted:
             display_p = display_p[display_p['삭제'] != True]
 
@@ -699,7 +699,7 @@ with tabs[2]:
             hide_index=True,
             use_container_width=True,
             column_config={
-                "id": None, # ID는 수정 불가
+                "id": None, 
                 "삭제": st.column_config.CheckboxColumn("삭제"),
                 "실입금액": st.column_config.NumberColumn("실입금액", format="%,.0f"),
                 "선급금액": st.column_config.NumberColumn("선급금액", format="%,.0f"),
@@ -713,8 +713,6 @@ with tabs[2]:
             # DB 컬럼이 아닌 항목들 제외하고 전체 행 업서트
             drop_cols = ['발주차수','상태','삭제']
             to_up = edited_p.drop(columns=[c for c in drop_cols if c in edited_p.columns], errors='ignore')
-            
-            # null 값이나 빈 문자열 처리 (선택사항)
             to_up = to_up.fillna(0) 
             
             upsert_supabase_data("payments", to_up.to_dict(orient='records'))
