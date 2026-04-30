@@ -578,23 +578,23 @@ with tabs[2]:
         if '삭제' not in filtered.columns: filtered['삭제'] = False
         filtered['상태'] = filtered['삭제'].apply(lambda x: '삭제됨' if x else '')
         
-        # 실제 존재하는 컬럼만 노출
-        all_wanted = ['id','발주번호','발주차수','유형','거래처명','상품명','통화','입금일','실입금액','선급금액','한화환산액','송금사유','삭제','상태']
-        display_cols = [c for c in all_wanted if c in filtered.columns]
-        display_p = filtered[display_cols].sort_values('입금일', ascending=False).reset_index(drop=True)
+        display_cols = ['id','발주번호','발주차수','유형','거래처명','상품명','통화','입금일','실입금액','선급금액','한화환산액','송금사유','삭제','상태']
+        display_p = filtered[[c for c in display_cols if c in filtered.columns]].sort_values('입금일', ascending=False).reset_index(drop=True)
         if not show_deleted:
             display_p = display_p[display_p['삭제'] != True].reset_index(drop=True)
 
+        # 🔥 캐시 충돌 방지를 위해 키를 'v10'으로 변경
         edited_p = st.data_editor(
             display_p,
-            key="payment_editor_final_v7",
+            key="payment_editor_v10",
             hide_index=True,
             use_container_width=True,
             column_config={
                 "id": st.column_config.NumberColumn("ID", disabled=True),
                 "삭제": st.column_config.CheckboxColumn("삭제"),
                 "실입금액": st.column_config.NumberColumn("실입금액", format="%,.0f"),
-                "선급금액": st.column_config.NumberColumn("선급금액", format="%,.0f")
+                "선급금액": st.column_config.NumberColumn("선급금액", format="%,.0f"),
+                "입금일": st.column_config.TextColumn("입금일")
             }
         )
 
@@ -603,35 +603,32 @@ with tabs[2]:
             if not edited_p.empty:
                 try:
                     success_count = 0
-                    for _, row in edited_p.iterrows():
+                    # 전체 루프를 돌며 각 행의 id를 기준으로 업데이트 수행
+                    for index, row in edited_p.iterrows():
                         tid = int(row['id'])
-                        # 🔥 KeyError 방지를 위해 컬럼 존재 여부 체크하며 데이터 구성
                         up_data = {
-                            "실입금액": float(row.get('실입금액', 0)),
-                            "선급금액": float(row.get('선급금액', 0)),
-                            "입금일": str(row.get('입금일'))
+                            "실입금액": float(row['실입금액']),
+                            "선급금액": float(row['선급금액']),
+                            "입금일": str(row['입금일']),
+                            "송금사유": str(row['송금사유']) if pd.notna(row['송금사유']) else ""
                         }
-                        # '송금사유' 컬럼이 데이터에 있을 때만 포함
-                        if '송금사유' in row:
-                            up_data["송금사유"] = str(row['송금사유']) if pd.notna(row['송금사유']) else ""
-
+                        
+                        # Supabase 업데이트 호출
                         supabase.table("payments").update(up_data).eq("id", tid).execute()
                         success_count += 1
                     
-                    st.success(f"{success_count}건 저장 완료")
+                    st.success(f"{success_count}건 저장 완료! 페이지를 새로고침합니다.")
                     st.rerun()
                 except Exception as e:
-                    st.error(f"저장 중 오류 발생: {e}")
+                    st.error(f"저장 실패: {e}")
 
         if b2.button("🗑️ 선택 삭제 실행", use_container_width=True):
-            to_del = edited_p[edited_p['삭제'] == True]
-            for tid in to_del['id']: 
+            for tid in edited_p[edited_p['삭제'] == True]['id']: 
                 supabase.table("payments").update({"삭제": True}).eq("id", int(tid)).execute()
             st.rerun()
 
         if b3.button("♻️ 선택 복구 실행", use_container_width=True):
-            to_restore = edited_p[edited_p['삭제'] == True]
-            for tid in to_restore['id']: 
+            for tid in edited_p[edited_p['삭제'] == True]['id']: 
                 supabase.table("payments").update({"삭제": False}).eq("id", int(tid)).execute()
             st.rerun()
 
