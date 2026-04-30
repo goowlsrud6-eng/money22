@@ -677,7 +677,6 @@ with tabs[2]:
         if '삭제' not in filtered.columns:
             filtered['삭제'] = False
 
-        # 삭제 상태 표시
         filtered['상태'] = filtered['삭제'].apply(lambda x: '삭제됨' if x else '')
 
         display_cols = [
@@ -685,20 +684,19 @@ with tabs[2]:
             '통화','입금일','실입금액','선급금액','한화환산액','송금사유','삭제','상태'
         ]
         
-        # 1. 인덱스 초기화로 st.data_editor 혼선 방지
+        # 인덱스 초기화로 st.data_editor 안정성 확보
         display_p = filtered[display_cols].sort_values('입금일', ascending=False).reset_index(drop=True)
 
         if not show_deleted:
             display_p = display_p[display_p['삭제'] != True].reset_index(drop=True)
 
-        # 2. 에디터 설정
         edited_p = st.data_editor(
             display_p,
             key="payment_editor_final",
             hide_index=True,
             use_container_width=True,
             column_config={
-                "id": None, # ID는 숨김 처리하여 수정 방지
+                "id": None, 
                 "삭제": st.column_config.CheckboxColumn("삭제"),
                 "실입금액": st.column_config.NumberColumn("실입금액", format="%,.0f"),
                 "선급금액": st.column_config.NumberColumn("선급금액", format="%,.0f"),
@@ -710,11 +708,10 @@ with tabs[2]:
 
         if b1.button("💾 상세 수정 저장", use_container_width=True):
             if not edited_p.empty:
-                # DB 테이블에 실재하지 않는 가공 컬럼 제거 (발주차수, 상태, 삭제, dt 등)
+                # DB 실제 컬럼만 필터링하여 업서트
                 db_cols = ['id', '발주번호', '유형', '거래처명', '상품명', '통화', '입금일', '실입금액', '선급금액', '한화환산액', '송금사유']
                 to_up = edited_p[[col for col in db_cols if col in edited_p.columns]].copy()
                 
-                # 저장 실행
                 upsert_supabase_data("payments", to_up.to_dict(orient='records'))
                 st.success("수정 사항이 저장되었습니다.")
                 st.rerun()
@@ -737,6 +734,7 @@ with tabs[2]:
 
         st.divider()
 
+        # 하단 메트릭 섹션 (filtered 기준이므로 새로고침 후 자동 반영)
         m1, m2, m3 = st.columns(3)
         m1.metric("총 지급액 (KRW)", f"{filtered['한화환산액'].sum():,.0f} 원")
         m2.metric("총 지급액 (USD)", f"${filtered[filtered['통화']=='USD']['실입금액'].sum():,.0f}")
