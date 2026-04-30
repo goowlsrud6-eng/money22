@@ -153,15 +153,49 @@ with tabs[0]:
     with col_input:
         st.subheader("1. 수기 직접 입력")
 
-        with st.form("manual_pay_form", clear_on_submit=True):
+        with st.form("manual_pay_form", clear_on_submit=Tru
+from decimal import Decimal, InvalidOperation
 
-            # 발주번호 선택
+def to_money(v):
+    if pd.isna(v):
+        return 0
+
+    s = str(v).strip()
+    if not s:
+        return 0
+
+    s = (
+        s.replace(",", "")
+         .replace("₩", "")
+         .replace("원", "")
+         .replace(" ", "")
+    )
+
+    try:
+        return int(Decimal(s))
+    except InvalidOperation:
+        return 0
+
+
+# --- [Tab 0] 입금 내역 등록 (자동 연동 강화 버전) ---
+with tabs[0]:
+    st.header("입금 내역 등록 및 관리")
+
+    v_master = get_supabase_data("vendors")
+    o_data = get_supabase_data("orders")
+    o_active = o_data[o_data['마감여부'] == 0] if not o_data.empty else pd.DataFrame()
+
+    col_input, col_excel = st.columns([1.5, 1])
+
+    with col_input:
+        st.subheader("1. 수기 직접 입력")
+
+        with st.form("manual_pay_form", clear_on_submit=True):
             p_oid = st.selectbox(
                 "발주번호 연동",
                 ["없음"] + (list(o_active['발주번호']) if not o_active.empty else [])
             )
 
-            # 🔥 발주 자동 매칭
             if p_oid != "없음":
                 match = o_active[o_active['발주번호'] == p_oid].iloc[0]
                 auto_vn = match['거래처명']
@@ -174,7 +208,6 @@ with tabs[0]:
                 auto_prod = ""
                 auto_cur = "한화"
 
-            # 입력 필드
             p_date = st.date_input("입금일자", value=datetime.now())
 
             vn_list = ["선택"] + (list(v_master['거래처명'].unique()) if not v_master.empty else [])
@@ -195,8 +228,8 @@ with tabs[0]:
 
             r3c1, r3c2, r3c3 = st.columns(3)
 
-            p_dep = r3c1.number_input("실입금액")
-            p_pre = r3c2.number_input("선급금액")
+            p_dep = r3c1.number_input("실입금액", step=1)
+            p_pre = r3c2.number_input("선급금액", step=1)
 
             cur_list = ["한화", "USD", "CNY"]
             p_cur = r3c3.selectbox(
@@ -207,18 +240,13 @@ with tabs[0]:
 
             p_memo = st.text_input("비고 (송금 사유 등)")
 
-            # 저장
             if st.form_submit_button("입금 내역 저장"):
-
                 if p_vn == "선택":
                     st.error("거래처를 선택하세요.")
-
                 elif p_ct == "선택":
                     st.error("유형을 선택하세요.")
-
                 elif p_dep == 0 and p_pre == 0:
                     st.error("금액을 입력하세요.")
-
                 else:
                     vi = v_master[v_master['거래처명'] == p_vn].iloc[0]
 
@@ -230,8 +258,8 @@ with tabs[0]:
                         "거래처명": p_vn,
                         "상품명": p_pr,
                         "통화": p_cur,
-                        "실입금액": p_dep,
-                        "선급금액": p_pre,
+                        "실입금액": to_money(p_dep),
+                        "선급금액": to_money(p_pre),
                         "메모": p_memo,
                         "은행": vi['은행'],
                         "계좌번호": vi['계좌번호'],
@@ -241,11 +269,8 @@ with tabs[0]:
                     st.success("저장 완료")
                     st.rerun()
 
-    # -------------------------------
-    # 🔵 CSV 업로드 (기존 유지)
-    # -------------------------------
     with col_excel:
-        st.subheader("2. CSV 일괄 업로드 (v136 지능형 매칭)")
+        st.subheader("2. CSV 일괄 업로드 (원 단위 보존)")
 
         csv_template = pd.DataFrame(columns=[
             "발주번호", "거래처", "유형", "상품명",
@@ -261,7 +286,6 @@ with tabs[0]:
         up_pay = st.file_uploader("CSV 선택", type=['csv'], key=f"pay_up_{st.session_state.pay_up_key}")
 
         if up_pay and st.button("파일 일괄 저장 실행"):
-
             df_up = pd.read_csv(up_pay)
             df_up.columns = [str(c).strip().replace('\ufeff', '') for c in df_up.columns]
 
@@ -269,16 +293,24 @@ with tabs[0]:
             up_list = []
 
             for i, r in df_up.iterrows():
-
                 oid_v = to_str(r.get('발주번호'))
                 vn_v = to_str(r.get('거래처'))
 
-                match_o = o_data[o_data['발주번호'] == oid_v].iloc[0] if oid_v and not o_data[o_data['발주번호'] == oid_v].empty else None
+                match_o = (
+                    o_data[o_data['발주번호'] == oid_v].iloc[0]
+                    if oid_v and not o_data[o_data['발주번호'] == oid_v].empty
+                    else None
+                )
 
                 vn_f = match_o['거래처명'] if match_o is not None else vn_v
 
-                vi = v_master[v_master['거래처명'].str.lower() == vn_f.lower()].iloc[0] \
-                    if not v_master[v_master['거래처명'].str.lower() == vn_f.lower()].empty else None
+                vi = (
+                    v_master[v_master['거래처명'].str.lower() == vn_f.lower()].iloc[0]
+                    if not v_master.empty
+                    and vn_f
+                    and not v_master[v_master['거래처명'].str.lower() == vn_f.lower()].empty
+                    else None
+                )
 
                 up_list.append({
                     "id": ids[i],
@@ -288,8 +320,8 @@ with tabs[0]:
                     "거래처명": vn_f,
                     "상품명": match_o['상품명'] if match_o is not None else to_str(r.get('상품명')),
                     "통화": match_o['통화'] if match_o is not None else "한화",
-                    "실입금액": to_float(r.get('실입금액')),
-                    "선급금액": to_float(r.get('선급금액')),
+                    "실입금액": to_money(r.get('실입금액')),
+                    "선급금액": to_money(r.get('선급금액')),
                     "메모": to_str(r.get('송금사유')),
                     "은행": vi['은행'] if vi is not None else "",
                     "계좌번호": vi['계좌번호'] if vi is not None else "",
@@ -300,28 +332,34 @@ with tabs[0]:
                 st.session_state.pay_up_key += 1
                 st.rerun()
 
+
 # --- [Tab 1] 발주서 등록 및 관리 ---
 with tabs[1]:
     st.header("📦 발주서 등록 및 관리")
-    
+
     v_master = get_supabase_data("vendors")
     o_data = get_supabase_data("orders")
-    
-    c1, c2 = st.columns([1, 1.8]) 
-    
-    # --- 발주 등록 ---
+
+    c1, c2 = st.columns([1, 1.8])
+
     with c1:
         st.subheader("발주 등록")
 
-        o_files = st.file_uploader("이카운트 엑셀", type=['xlsx'], accept_multiple_files=True, key=f"ord_up_{st.session_state.order_up_key}")
+        o_files = st.file_uploader(
+            "이카운트 엑셀",
+            type=['xlsx'],
+            accept_multiple_files=True,
+            key=f"ord_up_{st.session_state.order_up_key}"
+        )
+
         if o_files and st.button("🚀 분석 실행", use_container_width=True):
-            for f in o_files: 
+            for f in o_files:
                 success, msg = process_ecount_v136_cloud(f)
                 if not success:
                     st.error(f"[{f.name}] {msg}")
             st.session_state.order_up_key += 1
             st.rerun()
-        
+
         st.divider()
 
         with st.form("manual_order_form", clear_on_submit=True):
@@ -334,12 +372,16 @@ with tabs[1]:
             m_prod = st.text_input("상품명")
 
             col_m1, col_m2 = st.columns(2)
-            m_amt = col_m1.number_input("총액", format="%.2f")
+            m_amt = col_m1.number_input("총액", format="%.2f", step=1)
             m_cur = col_m2.selectbox("통화", ["한화", "USD", "CNY"])
 
             if st.form_submit_button("저장"):
                 if m_oid and m_vn != "선택":
-                    v_type = v_master[v_master['거래처명']==m_vn].iloc[0]['기본유형'] if not v_master.empty else "기타"
+                    v_type = (
+                        v_master[v_master['거래처명'] == m_vn].iloc[0]['기본유형']
+                        if not v_master.empty
+                        else "기타"
+                    )
 
                     new_order = {
                         "발주번호": str(m_oid).strip(),
@@ -348,7 +390,7 @@ with tabs[1]:
                         "거래처명": str(m_vn).strip(),
                         "상품명": str(m_prod).strip(),
                         "유형": v_type,
-                        "발주총액": float(m_amt),
+                        "발주총액": to_money(m_amt),
                         "통화": str(m_cur),
                         "마감여부": 0,
                         "삭제여부": 0
@@ -357,51 +399,43 @@ with tabs[1]:
                     upsert_supabase_data("orders", new_order)
                     st.rerun()
 
-    # --- 목록 ---
     with c2:
         st.subheader("발주 목록")
 
         if not o_data.empty:
-
             show_deleted = st.checkbox("삭제된 발주 보기")
             show_closed = st.checkbox("마감된 발주 포함")
 
             disp_o = o_data.copy()
 
-            # 삭제 필터
             if show_deleted:
                 disp_o = disp_o[disp_o['삭제여부'] == 1]
             else:
                 disp_o = disp_o[disp_o['삭제여부'] == 0]
 
-            # 마감 필터
             if not show_closed:
                 disp_o = disp_o[disp_o['마감여부'] == 0]
 
-            # 상태 표시
             disp_o['상태'] = disp_o.apply(
-                lambda r: "🗑️" if r['삭제여부']==1 else ("🔴" if r['마감여부']==1 else "🟢"),
+                lambda r: "🗑️" if r['삭제여부'] == 1 else ("🔴" if r['마감여부'] == 1 else "🟢"),
                 axis=1
             )
 
             disp_o['삭제'] = False
-
-            # 🔥 삭제여부 컬럼 숨김
             disp_o = disp_o.drop(columns=['삭제여부'], errors='ignore')
-
             disp_o = disp_o.sort_values(by=["마감여부", "발주일"], ascending=[True, False])
 
             ev_o = st.data_editor(
                 disp_o,
                 hide_index=True,
                 use_container_width=True,
-                height=min(700, 60 + len(disp_o)*35),
+                height=min(700, 60 + len(disp_o) * 35),
                 key="editor_orders",
                 column_config={
                     "삭제": st.column_config.CheckboxColumn("삭제"),
                     "상태": st.column_config.TextColumn("상태", width="small"),
                     "마감여부": st.column_config.CheckboxColumn("마감"),
-                    "발주총액": st.column_config.NumberColumn("총액", format="%,.2f"),
+                    "발주총액": st.column_config.NumberColumn("총액", format="%,.0f"),
                     "발주차수": st.column_config.TextColumn("차수")
                 },
                 disabled=["상태", "발주번호", "발주일", "유형"]
@@ -409,16 +443,13 @@ with tabs[1]:
 
             col_btn1, col_btn2, col_btn3 = st.columns(3)
 
-            # 저장
             with col_btn1:
                 if st.button("💾 저장", use_container_width=True):
-
-                    final_save = ev_o.drop(columns=['상태','삭제'], errors='ignore')
+                    final_save = ev_o.drop(columns=['상태', '삭제'], errors='ignore')
                     clean_data = final_save.fillna("").to_dict(orient='records')
 
                     upsert_supabase_data("orders", clean_data)
 
-                    # payments 동기화
                     for _, r in ev_o.iterrows():
                         sync_payload = {
                             "거래처명": str(r['거래처명']).strip(),
@@ -426,36 +457,34 @@ with tabs[1]:
                             "유형": str(r['유형']).strip()
                         }
 
-                        supabase.table("payments")\
-                            .update(sync_payload)\
-                            .eq("발주번호", str(r['발주번호']))\
+                        supabase.table("payments") \
+                            .update(sync_payload) \
+                            .eq("발주번호", str(r['발주번호'])) \
                             .execute()
 
                     st.rerun()
 
-            # 삭제
             with col_btn2:
                 if st.button("🗑️ 삭제", use_container_width=True):
                     del_list = ev_o[ev_o['삭제'] == True]
 
                     for oid in del_list['발주번호']:
-                        supabase.table("orders")\
-                            .update({"삭제여부": 1})\
-                            .eq("발주번호", oid)\
+                        supabase.table("orders") \
+                            .update({"삭제여부": 1}) \
+                            .eq("발주번호", oid) \
                             .execute()
 
                     st.rerun()
 
-            # 복구
             with col_btn3:
                 if show_deleted:
                     if st.button("♻️ 복구", use_container_width=True):
                         restore_list = ev_o[ev_o['삭제'] == True]
 
                         for oid in restore_list['발주번호']:
-                            supabase.table("orders")\
-                                .update({"삭제여부": 0})\
-                                .eq("발주번호", oid)\
+                            supabase.table("orders") \
+                                .update({"삭제여부": 0}) \
+                                .eq("발주번호", oid) \
                                 .execute()
 
                         st.rerun()
@@ -463,42 +492,53 @@ with tabs[1]:
         else:
             st.info("내역 없음")
 
+
 # --- [Tab 2] 상세 내역 및 통합 정산 ---
 with tabs[2]:
     st.header("📋 상세 내역 및 통합 정산")
+
     p_all = get_supabase_data("payments")
     o_all = get_supabase_data("orders")
     ex_rates = get_supabase_data("exchange_rates")
 
     if not p_all.empty:
-        # 🔗 발주 데이터 연동
         if not o_all.empty:
             ref_dict = o_all.set_index('발주번호')[['거래처명', '상품명', '유형', '발주차수']].to_dict('index')
+
             def fill_info(row):
                 oid = row.get('발주번호')
                 if oid in ref_dict:
-                    if not to_str(row.get('거래처명')): row['거래처명'] = ref_dict[oid]['거래처명']
-                    if not to_str(row.get('상품명')): row['상품명'] = ref_dict[oid]['상품명']
-                    if not to_str(row.get('유형')): row['유형'] = ref_dict[oid]['유형']
+                    if not to_str(row.get('거래처명')):
+                        row['거래처명'] = ref_dict[oid]['거래처명']
+                    if not to_str(row.get('상품명')):
+                        row['상품명'] = ref_dict[oid]['상품명']
+                    if not to_str(row.get('유형')):
+                        row['유형'] = ref_dict[oid]['유형']
                     row['발주차수'] = ref_dict[oid].get('발주차수', '-')
                 return row
+
             p_all = p_all.apply(fill_info, axis=1)
+
+        if '메모' in p_all.columns and '송금사유' not in p_all.columns:
+            p_all['송금사유'] = p_all['메모']
 
         p_all['dt'] = pd.to_datetime(p_all['입금일'], errors='coerce')
         p_all = p_all.dropna(subset=['dt'])
 
-        # 🔎 필터 레이아웃
         st.subheader("🔎 필터")
         f_left, f_right = st.columns([1.2, 1])
-        
+
         with f_left:
             f1, f2 = st.columns(2)
             f3, f4 = st.columns(2)
+
             years = sorted(p_all['dt'].dt.year.unique())
+
             start_y = f1.selectbox("시작 연도", years, index=0)
-            end_y = f2.selectbox("종료 연도", years, index=len(years)-1)
+            end_y = f2.selectbox("종료 연도", years, index=len(years) - 1)
             start_m = f3.selectbox("시작 월", list(range(1, 13)), index=0)
             end_m = f4.selectbox("종료 월", list(range(1, 13)), index=11)
+
             filter_cat = st.selectbox("유형 필터", ["전체 유형"] + CATEGORIES)
             search_vendor = st.text_input("🔍 업체 검색")
             search_product = st.text_input("🔍 상품 검색")
@@ -521,69 +561,127 @@ with tabs[2]:
         if search_order:
             filtered = filtered[filtered['발주차수'].astype(str).str.contains(search_order, case=False, na=False)]
 
-        # 💱 환산 계산
         if not ex_rates.empty:
             ex_rates['ym'] = pd.to_datetime(ex_rates['날짜'], errors='coerce').dt.strftime('%Y-%m')
 
         def get_conv(row):
             try:
-                if row['통화'] == '한화': return float(row['실입금액'])
-                ym = str(row['입금일'])[:7]
+                amount = float(row.get('실입금액', 0))
+                currency = str(row.get('통화', '한화'))
+
+                if currency == '한화':
+                    return amount
+
+                ym = str(row.get('입금일'))[:7]
+
                 if not ex_rates.empty:
                     rate_df = ex_rates[ex_rates['ym'] == ym]
-                    curr = str(row['통화']).lower()
+                    curr = currency.lower()
+
                     if curr in rate_df.columns:
                         avg = rate_df[curr].mean()
-                        if pd.notna(avg) and avg > 0: return float(row['실입금액']) * float(avg)
+                        if pd.notna(avg) and avg > 0:
+                            return amount * float(avg)
+
                 rates = {'USD': 1350.0, 'CNY': 190.0}
-                return float(row['실입금액']) * rates.get(row['통화'], 0)
-            except: return 0
+                return amount * rates.get(currency, 0)
+
+            except:
+                return 0
 
         filtered['한화환산액'] = filtered.apply(get_conv, axis=1)
 
-        # 📊 필터 요약
         with f_right:
             st.subheader("📊 필터 요약")
-            order_sum = o_all.groupby('유형')['발주총액'].sum().reset_index()
-            summary = filtered.groupby('유형').agg({'실입금액':'sum', '선급금액':'sum', '한화환산액':'sum'}).reset_index()
+
+            order_sum = o_all.groupby('유형')['발주총액'].sum().reset_index() if not o_all.empty else pd.DataFrame(columns=['유형', '발주총액'])
+
+            summary = filtered.groupby('유형').agg({
+                '실입금액': 'sum',
+                '선급금액': 'sum',
+                '한화환산액': 'sum'
+            }).reset_index()
+
             summary = pd.merge(summary, order_sum, on='유형', how='left').fillna(0)
             summary['총지급액'] = summary['실입금액'] + summary['선급금액']
             summary['선급금잔액'] = summary['발주총액'] - summary['총지급액']
-            summary = summary.rename(columns={'발주총액':'총발주액', '한화환산액':'한환산액'})[['유형','총발주액','총지급액','선급금잔액','한환산액']]
-            st.dataframe(summary.style.format('{:,.0f}', subset=['총발주액','총지급액','선급금잔액','한환산액']), hide_index=True, use_container_width=True, height=220)
+
+            summary = summary.rename(columns={
+                '발주총액': '총발주액',
+                '한화환산액': '한환산액'
+            })[['유형', '총발주액', '총지급액', '선급금잔액', '한환산액']]
+
+            st.dataframe(
+                summary.style.format('{:,.0f}', subset=['총발주액', '총지급액', '선급금잔액', '한환산액']),
+                hide_index=True,
+                use_container_width=True,
+                height=220
+            )
 
         st.divider()
 
-        # 🔍 발주별 정산 현황
         st.subheader("🔍 발주별 정산 및 미수금 현황")
-        p_agg = p_all.groupby('발주번호').agg({'실입금액':'sum', '선급금액':'sum'}).reset_index()
+
+        p_agg = p_all.groupby('발주번호').agg({
+            '실입금액': 'sum',
+            '선급금액': 'sum'
+        }).reset_index()
+
         s_df = pd.merge(o_all, p_agg, on='발주번호', how='left').fillna(0)
         s_df['미수잔액'] = s_df['발주총액'] - (s_df['실입금액'] + s_df['선급금액'])
         s_df['진행상태'] = s_df['마감여부'].apply(lambda x: "✅ 마감" if x == 1 else "⏳ 진행")
-        disp_s = s_df[['발주번호','발주차수','진행상태','거래처명','상품명','발주총액','실입금액','선급금액','미수잔액','통화']]
+
+        disp_s = s_df[[
+            '발주번호', '발주차수', '진행상태', '거래처명', '상품명',
+            '발주총액', '실입금액', '선급금액', '미수잔액', '통화'
+        ]]
 
         def highlight_row(row):
             style = [''] * len(row)
-            if row['진행상태'] == "✅ 마감": style = ['background-color: #f2f2f2; color: #999;'] * len(row)
-            if row['선급금액'] > 0: style[row.index.get_loc('선급금액')] = 'color: red;'
-            if row['미수잔액'] > 0: style[row.index.get_loc('미수잔액')] = 'color: blue;'
+            if row['진행상태'] == "✅ 마감":
+                style = ['background-color: #f2f2f2; color: #999;'] * len(row)
+            if row['선급금액'] > 0:
+                style[row.index.get_loc('선급금액')] = 'color: red;'
+            if row['미수잔액'] > 0:
+                style[row.index.get_loc('미수잔액')] = 'color: blue;'
             return style
-        st.dataframe(disp_s.style.apply(highlight_row, axis=1).format('{:,.0f}', subset=['발주총액','실입금액','선급금액','미수잔액']), hide_index=True, use_container_width=True)
+
+        st.dataframe(
+            disp_s.style.apply(highlight_row, axis=1).format(
+                '{:,.0f}',
+                subset=['발주총액', '실입금액', '선급금액', '미수잔액']
+            ),
+            hide_index=True,
+            use_container_width=True
+        )
 
         st.divider()
 
-        # 📝 상세 내역
         st.subheader("📝 입금 상세 내역")
+
         show_deleted = st.checkbox("삭제된 내역 보기")
-        if '삭제' not in filtered.columns: filtered['삭제'] = False
+
+        if '삭제' not in filtered.columns:
+            filtered['삭제'] = False
+
         filtered['상태'] = filtered['삭제'].apply(lambda x: '삭제됨' if x else '')
-        
-        display_cols = ['id','발주번호','발주차수','유형','거래처명','상품명','통화','입금일','실입금액','선급금액','한화환산액','송금사유','삭제','상태']
-        display_p = filtered[[c for c in display_cols if c in filtered.columns]].sort_values('입금일', ascending=False).reset_index(drop=True)
+
+        if '메모' in filtered.columns and '송금사유' not in filtered.columns:
+            filtered['송금사유'] = filtered['메모']
+
+        display_cols = [
+            'id', '발주번호', '발주차수', '유형', '거래처명', '상품명',
+            '통화', '입금일', '실입금액', '선급금액', '한화환산액',
+            '송금사유', '삭제', '상태'
+        ]
+
+        display_p = filtered[
+            [c for c in display_cols if c in filtered.columns]
+        ].sort_values('입금일', ascending=False).reset_index(drop=True)
+
         if not show_deleted:
             display_p = display_p[display_p['삭제'] != True].reset_index(drop=True)
 
-        # 🔥 데이터 에디터 (수정된 로직 반영 대상)
         edited_p = st.data_editor(
             display_p,
             key="payment_editor_v10",
@@ -592,15 +690,16 @@ with tabs[2]:
             column_config={
                 "id": st.column_config.NumberColumn("ID", disabled=True),
                 "삭제": st.column_config.CheckboxColumn("삭제"),
-                "실입금액": st.column_config.NumberColumn("실입금액", format="%,.0f"),
-                "선급금액": st.column_config.NumberColumn("선급금액", format="%,.0f"),
-                "입금일": st.column_config.TextColumn("입금일")
+                "실입금액": st.column_config.NumberColumn("실입금액", format="%,.0f", step=1),
+                "선급금액": st.column_config.NumberColumn("선급금액", format="%,.0f", step=1),
+                "한화환산액": st.column_config.NumberColumn("한화환산액", format="%,.0f", disabled=True),
+                "입금일": st.column_config.TextColumn("입금일"),
+                "송금사유": st.column_config.TextColumn("송금사유")
             }
         )
 
         b1, b2, b3 = st.columns(3)
-        
-        # 💾 상세 수정 저장 (요청하신 수정 로직 적용)
+
         if b1.button("💾 상세 수정 저장", use_container_width=True):
             state = st.session_state.get("payment_editor_v10", {})
             edited_rows = state.get("edited_rows", {})
@@ -608,19 +707,19 @@ with tabs[2]:
             if edited_rows:
                 try:
                     success_count = 0
+
                     for idx, changes in edited_rows.items():
-                        # display_p의 인덱스를 통해 해당 행의 고유 ID 추출
                         tid = int(display_p.iloc[int(idx)]["id"])
                         up_data = {}
 
                         if "실입금액" in changes:
-                            up_data["실입금액"] = float(changes["실입금액"])
+                            up_data["실입금액"] = to_money(changes["실입금액"])
                         if "선급금액" in changes:
-                            up_data["선급금액"] = float(changes["선급금액"])
+                            up_data["선급금액"] = to_money(changes["선급금액"])
                         if "입금일" in changes:
                             up_data["입금일"] = str(changes["입금일"])
                         if "송금사유" in changes:
-                            up_data["송금사유"] = str(changes["송금사유"])
+                            up_data["메모"] = str(changes["송금사유"])
 
                         if up_data:
                             supabase.table("payments").update(up_data).eq("id", tid).execute()
@@ -628,26 +727,32 @@ with tabs[2]:
 
                     st.success(f"{success_count}건 저장 완료! 페이지를 새로고침합니다.")
                     st.rerun()
+
                 except Exception as e:
                     st.error(f"저장 실패: {e}")
             else:
                 st.info("수정된 내용이 없습니다.")
 
         if b2.button("🗑️ 선택 삭제 실행", use_container_width=True):
-            for tid in edited_p[edited_p['삭제'] == True]['id']: 
+            for tid in edited_p[edited_p['삭제'] == True]['id']:
                 supabase.table("payments").update({"삭제": True}).eq("id", int(tid)).execute()
             st.rerun()
 
         if b3.button("♻️ 선택 복구 실행", use_container_width=True):
-            for tid in edited_p[edited_p['삭제'] == True]['id']: 
+            for tid in edited_p[edited_p['삭제'] == True]['id']:
                 supabase.table("payments").update({"삭제": False}).eq("id", int(tid)).execute()
             st.rerun()
 
         st.divider()
+
         m1, m2, m3 = st.columns(3)
         m1.metric("총 지급액 (KRW)", f"{filtered['한화환산액'].sum():,.0f} 원")
-        m2.metric("총 지급액 (USD)", f"${filtered[filtered['통화']=='USD']['실입금액'].sum():,.0f}")
-        m3.metric("총 지급액 (CNY)", f"¥{filtered[filtered['통화']=='CNY']['실입금액'].sum():,.0f}")
+        m2.metric("총 지급액 (USD)", f"${filtered[filtered['통화'] == 'USD']['실입금액'].sum():,.0f}")
+        m3.metric("총 지급액 (CNY)", f"¥{filtered[filtered['통화'] == 'CNY']['실입금액'].sum():,.0f}")
+
+    else:
+        st.info("입금 내역 없음")
+
         
 # --- [Tab 3] 거래처 관리 ---
 with tabs[3]:
