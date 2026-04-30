@@ -679,12 +679,16 @@ with tabs[2]:
 
         filtered['상태'] = filtered['삭제'].apply(lambda x: '삭제됨' if x else '')
 
-        display_cols = [
+        # 원하는 전체 컬럼 리스트
+        all_wanted_cols = [
             'id','발주번호','발주차수','유형','거래처명','상품명',
             '통화','입금일','실입금액','선급금액','한화환산액','송금사유','삭제','상태'
         ]
         
-        # 인덱스 초기화로 st.data_editor 안정성 확보
+        # 🔥 KeyError 방지: 실제로 존재하는 컬럼만 필터링
+        display_cols = [col for col in all_wanted_cols if col in filtered.columns]
+        
+        # 정렬 및 인덱스 초기화
         display_p = filtered[display_cols].sort_values('입금일', ascending=False).reset_index(drop=True)
 
         if not show_deleted:
@@ -692,7 +696,7 @@ with tabs[2]:
 
         edited_p = st.data_editor(
             display_p,
-            key="payment_editor_final",
+            key="payment_editor_v3",
             hide_index=True,
             use_container_width=True,
             column_config={
@@ -708,9 +712,10 @@ with tabs[2]:
 
         if b1.button("💾 상세 수정 저장", use_container_width=True):
             if not edited_p.empty:
-                # DB 실제 컬럼만 필터링하여 업서트
+                # DB 테이블에 실재하는 컬럼만 추출하여 저장
                 db_cols = ['id', '발주번호', '유형', '거래처명', '상품명', '통화', '입금일', '실입금액', '선급금액', '한화환산액', '송금사유']
-                to_up = edited_p[[col for col in db_cols if col in edited_p.columns]].copy()
+                final_cols = [col for col in db_cols if col in edited_p.columns]
+                to_up = edited_p[final_cols].copy()
                 
                 upsert_supabase_data("payments", to_up.to_dict(orient='records'))
                 st.success("수정 사항이 저장되었습니다.")
@@ -734,7 +739,6 @@ with tabs[2]:
 
         st.divider()
 
-        # 하단 메트릭 섹션 (filtered 기준이므로 새로고침 후 자동 반영)
         m1, m2, m3 = st.columns(3)
         m1.metric("총 지급액 (KRW)", f"{filtered['한화환산액'].sum():,.0f} 원")
         m2.metric("총 지급액 (USD)", f"${filtered[filtered['통화']=='USD']['실입금액'].sum():,.0f}")
