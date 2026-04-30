@@ -471,9 +471,7 @@ with tabs[2]:
     ex_rates = get_supabase_data("exchange_rates")
 
     if not p_all.empty:
-        # -------------------------------
         # 🔗 발주 데이터 연동
-        # -------------------------------
         if not o_all.empty:
             ref_dict = o_all.set_index('발주번호')[['거래처명', '상품명', '유형', '발주차수']].to_dict('index')
             def fill_info(row):
@@ -489,9 +487,7 @@ with tabs[2]:
         p_all['dt'] = pd.to_datetime(p_all['입금일'], errors='coerce')
         p_all = p_all.dropna(subset=['dt'])
 
-        # -------------------------------
         # 🔎 필터 레이아웃
-        # -------------------------------
         st.subheader("🔎 필터")
         f_left, f_right = st.columns([1.2, 1])
         
@@ -553,7 +549,7 @@ with tabs[2]:
             summary = pd.merge(summary, order_sum, on='유형', how='left').fillna(0)
             summary['총지급액'] = summary['실입금액'] + summary['선급금액']
             summary['선급금잔액'] = summary['발주총액'] - summary['총지급액']
-            summary = summary.rename(columns={'발주총액':'총발주액','한화환산액':'한환산액'})[['유형','총발주액','총지급액','선급금잔액','한환산액']]
+            summary = summary.rename(columns={'발주총액':'총발주액', '한화환산액':'한환산액'})[['유형','총발주액','총지급액','선급금잔액','한환산액']]
             st.dataframe(summary.style.format('{:,.0f}', subset=['총발주액','총지급액','선급금잔액','한환산액']), hide_index=True, use_container_width=True, height=220)
 
         st.divider()
@@ -582,44 +578,47 @@ with tabs[2]:
         if '삭제' not in filtered.columns: filtered['삭제'] = False
         filtered['상태'] = filtered['삭제'].apply(lambda x: '삭제됨' if x else '')
         
-        display_cols = ['id','발주번호','발주차수','유형','거래처명','상품명','통화','입금일','실입금액','선급금액','한화환산액','송금사유','삭제','상태']
-        display_p = filtered[[c for c in display_cols if c in filtered.columns]].sort_values('입금일', ascending=False).reset_index(drop=True)
+        # 실제 존재하는 컬럼만 노출
+        all_wanted = ['id','발주번호','발주차수','유형','거래처명','상품명','통화','입금일','실입금액','선급금액','한화환산액','송금사유','삭제','상태']
+        display_cols = [c for c in all_wanted if c in filtered.columns]
+        display_p = filtered[display_cols].sort_values('입금일', ascending=False).reset_index(drop=True)
         if not show_deleted:
             display_p = display_p[display_p['삭제'] != True].reset_index(drop=True)
 
-        # 에디터 - id를 유지하여 각 행을 고유하게 식별
         edited_p = st.data_editor(
             display_p,
-            key="v_final_direct_db",
+            key="payment_editor_final_v7",
             hide_index=True,
             use_container_width=True,
             column_config={
-                "id": None, # 화면에선 안보여도 데이터에는 id가 포함됨
+                "id": st.column_config.NumberColumn("ID", disabled=True),
                 "삭제": st.column_config.CheckboxColumn("삭제"),
                 "실입금액": st.column_config.NumberColumn("실입금액", format="%,.0f"),
                 "선급금액": st.column_config.NumberColumn("선급금액", format="%,.0f")
             }
         )
 
-        # 💾 저장 및 버튼 섹션
         b1, b2, b3 = st.columns(3)
         if b1.button("💾 상세 수정 저장", use_container_width=True):
             if not edited_p.empty:
                 try:
-                    # 🔥 DB 반영을 위한 직접 루프 업데이트
-                    # upsert_supabase_data 대신 직접 id를 기준으로 매칭하여 update 수행
+                    success_count = 0
                     for _, row in edited_p.iterrows():
-                        target_id = int(row['id'])
-                        update_data = {
-                            "실입금액": float(row['실입금액']),
-                            "선급금액": float(row['선급금액']),
-                            "송금사유": str(row['송금사유']) if pd.notna(row['송금사유']) else "",
-                            "입금일": str(row['입금일'])
+                        tid = int(row['id'])
+                        # 🔥 KeyError 방지를 위해 컬럼 존재 여부 체크하며 데이터 구성
+                        up_data = {
+                            "실입금액": float(row.get('실입금액', 0)),
+                            "선급금액": float(row.get('선급금액', 0)),
+                            "입금일": str(row.get('입금일'))
                         }
-                        # Supabase 직접 업데이트 실행
-                        supabase.table("payments").update(update_data).eq("id", target_id).execute()
+                        # '송금사유' 컬럼이 데이터에 있을 때만 포함
+                        if '송금사유' in row:
+                            up_data["송금사유"] = str(row['송금사유']) if pd.notna(row['송금사유']) else ""
+
+                        supabase.table("payments").update(up_data).eq("id", tid).execute()
+                        success_count += 1
                     
-                    st.success("DB 본체에 성공적으로 반영되었습니다!")
+                    st.success(f"{success_count}건 저장 완료")
                     st.rerun()
                 except Exception as e:
                     st.error(f"저장 중 오류 발생: {e}")
