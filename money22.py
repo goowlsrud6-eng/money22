@@ -153,7 +153,7 @@ with tabs[0]:
     with col_input:
         st.subheader("1. 수기 직접 입력")
 
-        with st.form("manual_pay_form", clear_on_submit=Tru
+        with st.form("manual_pay_form", clear_on_submit=True):
 from decimal import Decimal, InvalidOperation
 
 def to_money(v):
