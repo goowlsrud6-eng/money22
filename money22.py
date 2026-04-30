@@ -583,7 +583,7 @@ with tabs[2]:
         if not show_deleted:
             display_p = display_p[display_p['삭제'] != True].reset_index(drop=True)
 
-        # 🔥 캐시 충돌 방지를 위해 키를 'v10'으로 변경
+        # 🔥 데이터 에디터 (수정된 로직 반영 대상)
         edited_p = st.data_editor(
             display_p,
             key="payment_editor_v10",
@@ -599,28 +599,39 @@ with tabs[2]:
         )
 
         b1, b2, b3 = st.columns(3)
+        
+        # 💾 상세 수정 저장 (요청하신 수정 로직 적용)
         if b1.button("💾 상세 수정 저장", use_container_width=True):
-            if not edited_p.empty:
+            state = st.session_state.get("payment_editor_v10", {})
+            edited_rows = state.get("edited_rows", {})
+
+            if edited_rows:
                 try:
                     success_count = 0
-                    # 전체 루프를 돌며 각 행의 id를 기준으로 업데이트 수행
-                    for index, row in edited_p.iterrows():
-                        tid = int(row['id'])
-                        up_data = {
-                            "실입금액": float(row['실입금액']),
-                            "선급금액": float(row['선급금액']),
-                            "입금일": str(row['입금일']),
-                            "송금사유": str(row['송금사유']) if pd.notna(row['송금사유']) else ""
-                        }
-                        
-                        # Supabase 업데이트 호출
-                        supabase.table("payments").update(up_data).eq("id", tid).execute()
-                        success_count += 1
-                    
+                    for idx, changes in edited_rows.items():
+                        # display_p의 인덱스를 통해 해당 행의 고유 ID 추출
+                        tid = int(display_p.iloc[int(idx)]["id"])
+                        up_data = {}
+
+                        if "실입금액" in changes:
+                            up_data["실입금액"] = float(changes["실입금액"])
+                        if "선급금액" in changes:
+                            up_data["선급금액"] = float(changes["선급금액"])
+                        if "입금일" in changes:
+                            up_data["입금일"] = str(changes["입금일"])
+                        if "송금사유" in changes:
+                            up_data["송금사유"] = str(changes["송금사유"])
+
+                        if up_data:
+                            supabase.table("payments").update(up_data).eq("id", tid).execute()
+                            success_count += 1
+
                     st.success(f"{success_count}건 저장 완료! 페이지를 새로고침합니다.")
                     st.rerun()
                 except Exception as e:
                     st.error(f"저장 실패: {e}")
+            else:
+                st.info("수정된 내용이 없습니다.")
 
         if b2.button("🗑️ 선택 삭제 실행", use_container_width=True):
             for tid in edited_p[edited_p['삭제'] == True]['id']: 
