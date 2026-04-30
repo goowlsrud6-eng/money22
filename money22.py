@@ -358,7 +358,7 @@ with tabs[1]:
             m_prod = st.text_input("상품명")
 
             col_m1, col_m2 = st.columns(2)
-            m_amt = col_m1.number_input("총액", format="%.2f", step=1)
+            m_amt = col_m1.number_input("총액", min_value=0.0, step=0.01, format="%.2f")
             m_cur = col_m2.selectbox("통화", ["한화", "USD", "CNY"])
 
             if st.form_submit_button("저장"):
@@ -376,7 +376,7 @@ with tabs[1]:
                         "거래처명": str(m_vn).strip(),
                         "상품명": str(m_prod).strip(),
                         "유형": v_type,
-                        "발주총액": to_money(m_amt),
+                        "발주총액": float(m_amt),
                         "통화": str(m_cur),
                         "마감여부": 0,
                         "삭제여부": 0
@@ -421,7 +421,7 @@ with tabs[1]:
                     "삭제": st.column_config.CheckboxColumn("삭제"),
                     "상태": st.column_config.TextColumn("상태", width="small"),
                     "마감여부": st.column_config.CheckboxColumn("마감"),
-                    "발주총액": st.column_config.NumberColumn("총액", format="%,.0f"),
+                    "발주총액": st.column_config.NumberColumn("총액", format="%,.2f"),
                     "발주차수": st.column_config.TextColumn("차수")
                 },
                 disabled=["상태", "발주번호", "발주일", "유형"]
