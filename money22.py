@@ -488,6 +488,11 @@ with tabs[2]:
     ex_rates = get_supabase_data("exchange_rates")
 
     if not p_all.empty:
+        if '삭제' not in p_all.columns:
+            p_all['삭제'] = False
+
+        p_all['삭제'] = p_all['삭제'].fillna(False).astype(bool)
+
         if not o_all.empty:
             ref_dict = o_all.set_index('발주번호')[['거래처명', '상품명', '유형', '발주차수']].to_dict('index')
 
@@ -547,6 +552,10 @@ with tabs[2]:
         if search_order:
             filtered = filtered[filtered['발주차수'].astype(str).str.contains(search_order, case=False, na=False)]
 
+        # 계산용 데이터: 삭제된 입금은 항상 제외
+        calc_filtered = filtered[filtered['삭제'] != True].copy()
+        calc_p_all = p_all[p_all['삭제'] != True].copy()
+
         if not ex_rates.empty:
             ex_rates['ym'] = pd.to_datetime(ex_rates['날짜'], errors='coerce').dt.strftime('%Y-%m')
 
@@ -576,13 +585,14 @@ with tabs[2]:
                 return 0
 
         filtered['한화환산액'] = filtered.apply(get_conv, axis=1)
+        calc_filtered['한화환산액'] = calc_filtered.apply(get_conv, axis=1)
 
         with f_right:
             st.subheader("📊 필터 요약")
 
             order_sum = o_all.groupby('유형')['발주총액'].sum().reset_index() if not o_all.empty else pd.DataFrame(columns=['유형', '발주총액'])
 
-            summary = filtered.groupby('유형').agg({
+            summary = calc_filtered.groupby('유형').agg({
                 '실입금액': 'sum',
                 '선급금액': 'sum',
                 '한화환산액': 'sum'
@@ -608,7 +618,7 @@ with tabs[2]:
 
         st.subheader("🔍 발주별 정산 및 미수금 현황")
 
-        p_agg = p_all.groupby('발주번호').agg({
+        p_agg = calc_p_all.groupby('발주번호').agg({
             '실입금액': 'sum',
             '선급금액': 'sum'
         }).reset_index()
@@ -646,9 +656,6 @@ with tabs[2]:
         st.subheader("📝 입금 상세 내역")
 
         show_deleted = st.checkbox("삭제된 내역 보기")
-
-        if '삭제' not in filtered.columns:
-            filtered['삭제'] = False
 
         filtered['상태'] = filtered['삭제'].apply(lambda x: '삭제됨' if x else '')
 
@@ -720,21 +727,43 @@ with tabs[2]:
                 st.info("수정된 내용이 없습니다.")
 
         if b2.button("🗑️ 선택 삭제 실행", use_container_width=True):
-            for tid in edited_p[edited_p['삭제'] == True]['id']:
-                supabase.table("payments").update({"삭제": True}).eq("id", int(tid)).execute()
-            st.rerun()
+            try:
+                delete_ids = edited_p[edited_p['삭제'] == True]['id'].tolist()
+
+                if not delete_ids:
+                    st.info("삭제할 내역을 선택하세요.")
+                else:
+                    for tid in delete_ids:
+                        supabase.table("payments").update({"삭제": True}).eq("id", int(tid)).execute()
+
+                    st.success(f"{len(delete_ids)}건 삭제 처리 완료")
+                    st.rerun()
+
+            except Exception as e:
+                st.error(f"삭제 실패: {e}")
 
         if b3.button("♻️ 선택 복구 실행", use_container_width=True):
-            for tid in edited_p[edited_p['삭제'] == True]['id']:
-                supabase.table("payments").update({"삭제": False}).eq("id", int(tid)).execute()
-            st.rerun()
+            try:
+                restore_ids = edited_p[edited_p['삭제'] == True]['id'].tolist()
+
+                if not restore_ids:
+                    st.info("복구할 내역을 선택하세요.")
+                else:
+                    for tid in restore_ids:
+                        supabase.table("payments").update({"삭제": False}).eq("id", int(tid)).execute()
+
+                    st.success(f"{len(restore_ids)}건 복구 완료")
+                    st.rerun()
+
+            except Exception as e:
+                st.error(f"복구 실패: {e}")
 
         st.divider()
 
         m1, m2, m3 = st.columns(3)
-        m1.metric("총 지급액 (KRW)", f"{filtered['한화환산액'].sum():,.0f} 원")
-        m2.metric("총 지급액 (USD)", f"${filtered[filtered['통화'] == 'USD']['실입금액'].sum():,.0f}")
-        m3.metric("총 지급액 (CNY)", f"¥{filtered[filtered['통화'] == 'CNY']['실입금액'].sum():,.0f}")
+        m1.metric("총 지급액 (KRW)", f"{calc_filtered['한화환산액'].sum():,.0f} 원")
+        m2.metric("총 지급액 (USD)", f"${calc_filtered[calc_filtered['통화'] == 'USD']['실입금액'].sum():,.0f}")
+        m3.metric("총 지급액 (CNY)", f"¥{calc_filtered[calc_filtered['통화'] == 'CNY']['실입금액'].sum():,.0f}")
 
     else:
         st.info("입금 내역 없음")
