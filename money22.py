@@ -467,15 +467,18 @@ with tabs[1]:
 with tabs[2]:
     st.header("📋 상세 내역 및 통합 정산")
 
-    # 🔥 스타일 함수 (최상단 필수)
+    # 스타일 함수
     def highlight_row(row):
         style = [''] * len(row)
         if row.get('진행상태') == "✅ 마감":
             style = ['background-color: #f2f2f2; color: #999;'] * len(row)
-        if row.get('선급금액', 0) > 0:
+
+        if '선급금액' in row.index and row.get('선급금액', 0) > 0:
             style[row.index.get_loc('선급금액')] = 'color: red;'
-        if row.get('미수잔액', 0) > 0:
+
+        if '미수잔액' in row.index and row.get('미수잔액', 0) > 0:
             style[row.index.get_loc('미수잔액')] = 'color: blue;'
+
         return style
 
     # 데이터 로드
@@ -490,7 +493,7 @@ with tabs[2]:
 
         p_all['dt'] = pd.to_datetime(p_all['입금일'], errors='coerce')
 
-        # 🔗 발주 정보 연동
+        # 발주 정보 연동
         if not o_all.empty:
             ref_dict = o_all.set_index('발주번호')[['거래처명','상품명','유형','발주차수']].to_dict('index')
 
@@ -508,7 +511,7 @@ with tabs[2]:
 
             p_all = p_all.apply(fill_info, axis=1)
 
-        # 💱 환율
+        # 환율
         if not ex_rates.empty:
             ex_rates['ym'] = pd.to_datetime(ex_rates['날짜']).dt.strftime('%Y-%m')
 
@@ -537,7 +540,7 @@ with tabs[2]:
         p_valid = p_all[p_all['삭제'] != True].copy()
 
         # -----------------------
-        # 🔎 필터
+        # 필터
         # -----------------------
         left, right = st.columns([1.2,1])
 
@@ -587,7 +590,7 @@ with tabs[2]:
             ]
 
         # -----------------------
-        # 📊 요약
+        # 요약 (에러 수정 완료)
         # -----------------------
         with right:
             st.subheader("📊 필터 요약")
@@ -606,14 +609,21 @@ with tabs[2]:
                 summary['선급금잔액'] = summary['발주총액'] - summary['총지급액']
 
                 st.dataframe(
-                    summary.style.format('{:,.0f}'),
+                    summary.style.format({
+                        '실입금액':'{:,.0f}',
+                        '선급금액':'{:,.0f}',
+                        '한화환산액':'{:,.0f}',
+                        '발주총액':'{:,.0f}',
+                        '총지급액':'{:,.0f}',
+                        '선급금잔액':'{:,.0f}'
+                    }),
                     use_container_width=True
                 )
 
         st.divider()
 
         # -----------------------
-        # 📊 발주별 정산
+        # 발주별 정산
         # -----------------------
         st.subheader("🔍 발주별 정산 및 미수금 현황")
 
@@ -635,11 +645,11 @@ with tabs[2]:
         st.divider()
 
         # -----------------------
-        # 📝 상세내역
+        # 상세내역
         # -----------------------
         st.subheader("📝 입금 상세 내역")
 
-        st.caption("✔ 삭제/복구는 체크 후 저장해야 반영됨")
+        st.caption("삭제/복구는 체크 후 저장해야 반영됨")
 
         show_deleted = st.checkbox("삭제 포함")
 
@@ -661,7 +671,6 @@ with tabs[2]:
             }
         )
 
-        # 💾 저장
         if st.button("💾 저장"):
 
             orig = p_all.copy()
@@ -704,7 +713,7 @@ with tabs[2]:
         st.divider()
 
         # -----------------------
-        # 📊 하단 합계
+        # 하단 합계
         # -----------------------
         m1,m2,m3 = st.columns(3)
 
