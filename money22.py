@@ -4,6 +4,7 @@ import numpy as np
 import re
 import os
 from datetime import datetime, timedelta
+from decimal import Decimal, InvalidOperation
 import plotly.graph_objects as go
 from supabase import create_client, Client
 
@@ -40,11 +41,9 @@ def upsert_supabase_data(table_name, data):
         if not data:
             return True
 
-        # 🔥 핵심: dict → list 자동 변환
         if isinstance(data, dict):
             data = [data]
 
-        # 🔥 (선택) None 값 안전 처리
         data = [
             {k: ("" if v is None else v) for k, v in row.items()}
             for row in data
@@ -111,11 +110,29 @@ def process_ecount_v136_cloud(file):
 # ==============================================================================
 # 3. 유틸리티 함수 (smart_date 등 v136 원본 보존)
 # ==============================================================================
+
 def to_float(val):
     try:
         if val is None or pd.isna(val) or str(val).strip() == "": return 0.0
         return float(str(val).replace(',', '').strip())
     except: return 0.0
+
+def to_money(val):
+    try:
+        if val is None or pd.isna(val) or str(val).strip() == "":
+            return 0
+
+        s = str(val).strip()
+        s = (
+            s.replace(",", "")
+             .replace("₩", "")
+             .replace("원", "")
+             .replace(" ", "")
+        )
+
+        return int(Decimal(s))
+    except:
+        return 0
 
 def to_str(val):
     if val is None or pd.isna(val): return ""
@@ -132,9 +149,11 @@ def smart_date(date_val):
         ds = ds.replace(".", "-").replace("/", "-").replace(" ", "")
         return pd.to_datetime(ds).strftime("%Y-%m-%d")
     except: return datetime.now().strftime("%Y-%m-%d")
+
 # ==============================================================================
 # 4. 메인 UI 및 탭별 로직 (Tab 0 ~ Tab 4 완전체)
 # ==============================================================================
+
 tabs = st.tabs(["입금 등록", "발주서 등록", "상세내역 및 정산", "거래처 관리", "환율 분석"])
 
 # --- [Tab 0] 입금 내역 등록 (자동 연동 강화 버전) ---
@@ -154,48 +173,14 @@ with tabs[0]:
         st.subheader("1. 수기 직접 입력")
 
         with st.form("manual_pay_form", clear_on_submit=True):
-from decimal import Decimal, InvalidOperation
 
-def to_money(v):
-    if pd.isna(v):
-        return 0
-
-    s = str(v).strip()
-    if not s:
-        return 0
-
-    s = (
-        s.replace(",", "")
-         .replace("₩", "")
-         .replace("원", "")
-         .replace(" ", "")
-    )
-
-    try:
-        return int(Decimal(s))
-    except InvalidOperation:
-        return 0
-
-
-# --- [Tab 0] 입금 내역 등록 (자동 연동 강화 버전) ---
-with tabs[0]:
-    st.header("입금 내역 등록 및 관리")
-
-    v_master = get_supabase_data("vendors")
-    o_data = get_supabase_data("orders")
-    o_active = o_data[o_data['마감여부'] == 0] if not o_data.empty else pd.DataFrame()
-
-    col_input, col_excel = st.columns([1.5, 1])
-
-    with col_input:
-        st.subheader("1. 수기 직접 입력")
-
-        with st.form("manual_pay_form", clear_on_submit=True):
+            # 발주번호 선택
             p_oid = st.selectbox(
                 "발주번호 연동",
                 ["없음"] + (list(o_active['발주번호']) if not o_active.empty else [])
             )
 
+            # 🔥 발주 자동 매칭
             if p_oid != "없음":
                 match = o_active[o_active['발주번호'] == p_oid].iloc[0]
                 auto_vn = match['거래처명']
@@ -208,6 +193,7 @@ with tabs[0]:
                 auto_prod = ""
                 auto_cur = "한화"
 
+            # 입력 필드
             p_date = st.date_input("입금일자", value=datetime.now())
 
             vn_list = ["선택"] + (list(v_master['거래처명'].unique()) if not v_master.empty else [])
@@ -240,13 +226,18 @@ with tabs[0]:
 
             p_memo = st.text_input("비고 (송금 사유 등)")
 
+            # 저장
             if st.form_submit_button("입금 내역 저장"):
+
                 if p_vn == "선택":
                     st.error("거래처를 선택하세요.")
+
                 elif p_ct == "선택":
                     st.error("유형을 선택하세요.")
+
                 elif p_dep == 0 and p_pre == 0:
                     st.error("금액을 입력하세요.")
+
                 else:
                     vi = v_master[v_master['거래처명'] == p_vn].iloc[0]
 
@@ -269,8 +260,11 @@ with tabs[0]:
                     st.success("저장 완료")
                     st.rerun()
 
+    # -------------------------------
+    # 🔵 CSV 업로드
+    # -------------------------------
     with col_excel:
-        st.subheader("2. CSV 일괄 업로드 (원 단위 보존)")
+        st.subheader("2. CSV 일괄 업로드 (v136 지능형 매칭)")
 
         csv_template = pd.DataFrame(columns=[
             "발주번호", "거래처", "유형", "상품명",
@@ -286,31 +280,24 @@ with tabs[0]:
         up_pay = st.file_uploader("CSV 선택", type=['csv'], key=f"pay_up_{st.session_state.pay_up_key}")
 
         if up_pay and st.button("파일 일괄 저장 실행"):
-            df_up = pd.read_csv(up_pay)
+
+            df_up = pd.read_csv(up_pay, dtype=str, keep_default_na=False)
             df_up.columns = [str(c).strip().replace('\ufeff', '') for c in df_up.columns]
 
             ids = get_multiple_available_ids(len(df_up))
             up_list = []
 
             for i, r in df_up.iterrows():
+
                 oid_v = to_str(r.get('발주번호'))
                 vn_v = to_str(r.get('거래처'))
 
-                match_o = (
-                    o_data[o_data['발주번호'] == oid_v].iloc[0]
-                    if oid_v and not o_data[o_data['발주번호'] == oid_v].empty
-                    else None
-                )
+                match_o = o_data[o_data['발주번호'] == oid_v].iloc[0] if oid_v and not o_data[o_data['발주번호'] == oid_v].empty else None
 
                 vn_f = match_o['거래처명'] if match_o is not None else vn_v
 
-                vi = (
-                    v_master[v_master['거래처명'].str.lower() == vn_f.lower()].iloc[0]
-                    if not v_master.empty
-                    and vn_f
-                    and not v_master[v_master['거래처명'].str.lower() == vn_f.lower()].empty
-                    else None
-                )
+                vi = v_master[v_master['거래처명'].str.lower() == vn_f.lower()].iloc[0] \
+                    if not v_master.empty and vn_f and not v_master[v_master['거래처명'].str.lower() == vn_f.lower()].empty else None
 
                 up_list.append({
                     "id": ids[i],
@@ -331,7 +318,6 @@ with tabs[0]:
             if upsert_supabase_data("payments", up_list):
                 st.session_state.pay_up_key += 1
                 st.rerun()
-
 
 # --- [Tab 1] 발주서 등록 및 관리 ---
 with tabs[1]:
