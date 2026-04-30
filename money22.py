@@ -467,9 +467,12 @@ with tabs[1]:
 with tabs[2]:
     st.header("📋 상세 내역 및 통합 정산")
 
+    # -----------------------
     # 스타일 함수
+    # -----------------------
     def highlight_row(row):
         style = [''] * len(row)
+
         if row.get('진행상태') == "✅ 마감":
             style = ['background-color: #f2f2f2; color: #999;'] * len(row)
 
@@ -481,7 +484,9 @@ with tabs[2]:
 
         return style
 
+    # -----------------------
     # 데이터 로드
+    # -----------------------
     p_all = get_supabase_data("payments")
     o_all = get_supabase_data("orders")
     ex_rates = get_supabase_data("exchange_rates")
@@ -493,7 +498,9 @@ with tabs[2]:
 
         p_all['dt'] = pd.to_datetime(p_all['입금일'], errors='coerce')
 
+        # -----------------------
         # 발주 정보 연동
+        # -----------------------
         if not o_all.empty:
             ref_dict = o_all.set_index('발주번호')[['거래처명','상품명','유형','발주차수']].to_dict('index')
 
@@ -511,13 +518,16 @@ with tabs[2]:
 
             p_all = p_all.apply(fill_info, axis=1)
 
+        # -----------------------
         # 환율
+        # -----------------------
         if not ex_rates.empty:
             ex_rates['ym'] = pd.to_datetime(ex_rates['날짜']).dt.strftime('%Y-%m')
 
         def convert(row):
             try:
                 val = float(row['실입금액'])
+
                 if row['통화'] == '한화':
                     return int(round(val))
 
@@ -547,8 +557,8 @@ with tabs[2]:
         with left:
             st.subheader("🔎 필터")
 
-            f1,f2 = st.columns(2)
-            f3,f4 = st.columns(2)
+            f1, f2 = st.columns(2)
+            f3, f4 = st.columns(2)
 
             years = sorted(p_all['dt'].dt.year.unique())
             start_y = f1.selectbox("시작 연도", years)
@@ -590,7 +600,7 @@ with tabs[2]:
             ]
 
         # -----------------------
-        # 요약 (에러 수정 완료)
+        # 필터 요약
         # -----------------------
         with right:
             st.subheader("📊 필터 요약")
@@ -608,16 +618,19 @@ with tabs[2]:
                 summary['총지급액'] = summary['실입금액'] + summary['선급금액']
                 summary['선급금잔액'] = summary['발주총액'] - summary['총지급액']
 
+                summary = summary.rename(columns={
+                    '발주총액': '총발주액'
+                })[['유형','총발주액','총지급액','선급금잔액','한화환산액']]
+
                 st.dataframe(
                     summary.style.format({
-                        '실입금액':'{:,.0f}',
-                        '선급금액':'{:,.0f}',
-                        '한화환산액':'{:,.0f}',
-                        '발주총액':'{:,.0f}',
+                        '총발주액':'{:,.0f}',
                         '총지급액':'{:,.0f}',
-                        '선급금잔액':'{:,.0f}'
+                        '선급금잔액':'{:,.0f}',
+                        '한화환산액':'{:,.0f}'
                     }),
-                    use_container_width=True
+                    use_container_width=True,
+                    hide_index=True
                 )
 
         st.divider()
@@ -638,14 +651,19 @@ with tabs[2]:
         s_df['진행상태'] = s_df['마감여부'].apply(lambda x: "✅ 마감" if x==1 else "⏳ 진행")
 
         st.dataframe(
-            s_df.style.apply(highlight_row, axis=1).format('{:,.0f}'),
+            s_df.style.apply(highlight_row, axis=1).format({
+                '발주총액':'{:,.0f}',
+                '실입금액':'{:,.0f}',
+                '선급금액':'{:,.0f}',
+                '미수잔액':'{:,.0f}'
+            }),
             use_container_width=True
         )
 
         st.divider()
 
         # -----------------------
-        # 상세내역
+        # 상세 내역
         # -----------------------
         st.subheader("📝 입금 상세 내역")
 
@@ -715,7 +733,7 @@ with tabs[2]:
         # -----------------------
         # 하단 합계
         # -----------------------
-        m1,m2,m3 = st.columns(3)
+        m1, m2, m3 = st.columns(3)
 
         m1.metric("KRW", f"{filtered['한화환산액'].sum():,}")
         m2.metric("USD", f"{filtered[filtered['통화']=='USD']['실입금액'].sum():,}")
