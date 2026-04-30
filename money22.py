@@ -582,19 +582,19 @@ with tabs[2]:
         if '삭제' not in filtered.columns: filtered['삭제'] = False
         filtered['상태'] = filtered['삭제'].apply(lambda x: '삭제됨' if x else '')
         
-        # 🔥 'id' 컬럼은 반드시 포함되어야 함
-        display_cols = [c for c in ['id','발주번호','발주차수','유형','거래처명','상품명','통화','입금일','실입금액','선급금액','한화환산액','송금사유','삭제','상태'] if c in filtered.columns]
-        display_p = filtered[display_cols].sort_values('입금일', ascending=False).reset_index(drop=True)
+        display_cols = ['id','발주번호','발주차수','유형','거래처명','상품명','통화','입금일','실입금액','선급금액','한화환산액','송금사유','삭제','상태']
+        display_p = filtered[[c for c in display_cols if c in filtered.columns]].sort_values('입금일', ascending=False).reset_index(drop=True)
         if not show_deleted:
             display_p = display_p[display_p['삭제'] != True].reset_index(drop=True)
 
+        # 에디터 - id를 유지하여 각 행을 고유하게 식별
         edited_p = st.data_editor(
             display_p,
-            key="final_editor",
+            key="v_final_direct_db",
             hide_index=True,
             use_container_width=True,
             column_config={
-                "id": st.column_config.TextColumn("ID", disabled=True),
+                "id": None, # 화면에선 안보여도 데이터에는 id가 포함됨
                 "삭제": st.column_config.CheckboxColumn("삭제"),
                 "실입금액": st.column_config.NumberColumn("실입금액", format="%,.0f"),
                 "선급금액": st.column_config.NumberColumn("선급금액", format="%,.0f")
@@ -605,28 +605,35 @@ with tabs[2]:
         b1, b2, b3 = st.columns(3)
         if b1.button("💾 상세 수정 저장", use_container_width=True):
             if not edited_p.empty:
-                # 🔥 DB 컬럼만 정밀 추출
-                db_cols = ['id', '발주번호', '유형', '거래처명', '상품명', '통화', '입금일', '실입금액', '선급금액', '송금사유']
-                to_up = edited_p[[c for c in db_cols if c in edited_p.columns]].copy()
-                
-                # 🔥 데이터 타입 강제 변환 (이게 안 되면 반영이 안 됨)
-                for col in ['실입금액', '선급금액']:
-                    if col in to_up.columns:
-                        to_up[col] = pd.to_numeric(to_up[col], errors='coerce').fillna(0).astype(float)
-                
-                # 🔥 실제 Supabase Upsert 호출
-                upsert_supabase_data("payments", to_up.to_dict(orient='records'))
-                st.success("수정 사항이 반영되었습니다.")
-                st.rerun()
+                try:
+                    # 🔥 DB 반영을 위한 직접 루프 업데이트
+                    # upsert_supabase_data 대신 직접 id를 기준으로 매칭하여 update 수행
+                    for _, row in edited_p.iterrows():
+                        target_id = int(row['id'])
+                        update_data = {
+                            "실입금액": float(row['실입금액']),
+                            "선급금액": float(row['선급금액']),
+                            "송금사유": str(row['송금사유']) if pd.notna(row['송금사유']) else "",
+                            "입금일": str(row['입금일'])
+                        }
+                        # Supabase 직접 업데이트 실행
+                        supabase.table("payments").update(update_data).eq("id", target_id).execute()
+                    
+                    st.success("DB 본체에 성공적으로 반영되었습니다!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"저장 중 오류 발생: {e}")
 
         if b2.button("🗑️ 선택 삭제 실행", use_container_width=True):
             to_del = edited_p[edited_p['삭제'] == True]
-            for tid in to_del['id']: supabase.table("payments").update({"삭제": True}).eq("id", tid).execute()
+            for tid in to_del['id']: 
+                supabase.table("payments").update({"삭제": True}).eq("id", int(tid)).execute()
             st.rerun()
 
         if b3.button("♻️ 선택 복구 실행", use_container_width=True):
             to_restore = edited_p[edited_p['삭제'] == True]
-            for tid in to_restore['id']: supabase.table("payments").update({"삭제": False}).eq("id", tid).execute()
+            for tid in to_restore['id']: 
+                supabase.table("payments").update({"삭제": False}).eq("id", int(tid)).execute()
             st.rerun()
 
         st.divider()
