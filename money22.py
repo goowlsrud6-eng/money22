@@ -684,22 +684,21 @@ with tabs[2]:
             'id','발주번호','발주차수','유형','거래처명','상품명',
             '통화','입금일','실입금액','선급금액','한화환산액','송금사유','삭제','상태'
         ]
-        display_cols = [col for col in display_cols if col in filtered.columns]
+        
+        # 1. 인덱스 초기화로 st.data_editor 혼선 방지
+        display_p = filtered[display_cols].sort_values('입금일', ascending=False).reset_index(drop=True)
 
-        # 정렬 유지
-        display_p = filtered[display_cols].sort_values('입금일', ascending=False)
-
-        # 삭제 숨김
         if not show_deleted:
-            display_p = display_p[display_p['삭제'] != True]
+            display_p = display_p[display_p['삭제'] != True].reset_index(drop=True)
 
+        # 2. 에디터 설정
         edited_p = st.data_editor(
             display_p,
-            key="payment_editor",
+            key="payment_editor_final",
             hide_index=True,
             use_container_width=True,
             column_config={
-                "id": None, 
+                "id": None, # ID는 숨김 처리하여 수정 방지
                 "삭제": st.column_config.CheckboxColumn("삭제"),
                 "실입금액": st.column_config.NumberColumn("실입금액", format="%,.0f"),
                 "선급금액": st.column_config.NumberColumn("선급금액", format="%,.0f"),
@@ -710,14 +709,15 @@ with tabs[2]:
         b1, b2, b3 = st.columns(3)
 
         if b1.button("💾 상세 수정 저장", use_container_width=True):
-            # DB 컬럼이 아닌 항목들 제외하고 전체 행 업서트
-            drop_cols = ['발주차수','상태','삭제']
-            to_up = edited_p.drop(columns=[c for c in drop_cols if c in edited_p.columns], errors='ignore')
-            to_up = to_up.fillna(0) 
-            
-            upsert_supabase_data("payments", to_up.to_dict(orient='records'))
-            st.success("데이터가 성공적으로 수정되었습니다.")
-            st.rerun()
+            if not edited_p.empty:
+                # DB 테이블에 실재하지 않는 가공 컬럼 제거 (발주차수, 상태, 삭제, dt 등)
+                db_cols = ['id', '발주번호', '유형', '거래처명', '상품명', '통화', '입금일', '실입금액', '선급금액', '한화환산액', '송금사유']
+                to_up = edited_p[[col for col in db_cols if col in edited_p.columns]].copy()
+                
+                # 저장 실행
+                upsert_supabase_data("payments", to_up.to_dict(orient='records'))
+                st.success("수정 사항이 저장되었습니다.")
+                st.rerun()
 
         if b2.button("🗑️ 선택 삭제 실행", use_container_width=True):
             to_del = edited_p[edited_p['삭제'] == True]
@@ -726,8 +726,6 @@ with tabs[2]:
                     supabase.table("payments").update({"삭제": True}).eq("id", tid).execute()
                 st.warning(f"{len(to_del)}건 삭제 완료")
                 st.rerun()
-            else:
-                st.info("삭제할 항목의 '삭제' 체크박스를 선택해주세요.")
 
         if b3.button("♻️ 선택 복구 실행", use_container_width=True):
             to_restore = edited_p[edited_p['삭제'] == True]
@@ -736,13 +734,10 @@ with tabs[2]:
                     supabase.table("payments").update({"삭제": False}).eq("id", tid).execute()
                 st.success(f"{len(to_restore)}건 복구 완료")
                 st.rerun()
-            else:
-                st.info("복구할 항목의 '삭제' 체크박스를 선택해주세요.")
 
         st.divider()
 
         m1, m2, m3 = st.columns(3)
-
         m1.metric("총 지급액 (KRW)", f"{filtered['한화환산액'].sum():,.0f} 원")
         m2.metric("총 지급액 (USD)", f"${filtered[filtered['통화']=='USD']['실입금액'].sum():,.0f}")
         m3.metric("총 지급액 (CNY)", f"¥{filtered[filtered['통화']=='CNY']['실입금액'].sum():,.0f}")
