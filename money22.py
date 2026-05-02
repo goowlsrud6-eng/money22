@@ -586,21 +586,6 @@ with tabs[1]:
 with tabs[2]:
     st.header("📋 상세 내역 및 통합 정산")
 
-    if 'detail_notice' in st.session_state:
-        notice_type = st.session_state.detail_notice.get("type", "success")
-        notice_msg = st.session_state.detail_notice.get("msg", "")
-
-        if notice_type == "success":
-            st.success(notice_msg)
-        elif notice_type == "warning":
-            st.warning(notice_msg)
-        elif notice_type == "error":
-            st.error(notice_msg)
-        else:
-            st.info(notice_msg)
-
-        del st.session_state.detail_notice
-
     p_all = get_supabase_data("payments")
     o_all = get_supabase_data("orders")
     ex_rates = get_supabase_data("exchange_rates")
@@ -789,6 +774,21 @@ with tabs[2]:
 
         st.subheader("📝 입금 상세 내역")
 
+        if 'detail_notice' in st.session_state:
+            notice_type = st.session_state.detail_notice.get("type", "success")
+            notice_msg = st.session_state.detail_notice.get("msg", "")
+
+            if notice_type == "success":
+                st.success(notice_msg)
+            elif notice_type == "warning":
+                st.warning(notice_msg)
+            elif notice_type == "error":
+                st.error(notice_msg)
+            else:
+                st.info(notice_msg)
+
+            del st.session_state.detail_notice
+
         show_deleted = st.checkbox("삭제된 내역 보기")
 
         filtered['상태'] = filtered['삭제'].apply(lambda x: '삭제됨' if x else '')
@@ -833,8 +833,6 @@ with tabs[2]:
 
             if edited_rows:
                 try:
-                    success_count = 0
-
                     for idx, changes in edited_rows.items():
                         tid = int(display_p.iloc[int(idx)]["id"])
                         up_data = {}
@@ -850,7 +848,6 @@ with tabs[2]:
 
                         if up_data:
                             supabase.table("payments").update(up_data).eq("id", tid).execute()
-                            success_count += 1
 
                     st.session_state.detail_notice = {
                         "type": "success",
@@ -910,6 +907,7 @@ with tabs[2]:
 
     else:
         st.info("입금 내역 없음")
+
 
 
         
