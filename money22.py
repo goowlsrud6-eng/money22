@@ -160,6 +160,21 @@ tabs = st.tabs(["입금 등록", "발주서 등록", "상세내역 및 정산", 
 with tabs[0]:
     st.header("입금 내역 등록 및 관리")
 
+    if 'pay_notice' in st.session_state:
+        notice_type = st.session_state.pay_notice.get("type", "success")
+        notice_msg = st.session_state.pay_notice.get("msg", "")
+
+        if notice_type == "success":
+            st.success(notice_msg)
+        elif notice_type == "warning":
+            st.warning(notice_msg)
+        elif notice_type == "error":
+            st.error(notice_msg)
+        else:
+            st.info(notice_msg)
+
+        del st.session_state.pay_notice
+
     v_master = get_supabase_data("vendors")
     o_data = get_supabase_data("orders")
     o_active = o_data[o_data['마감여부'] == 0] if not o_data.empty else pd.DataFrame()
@@ -241,7 +256,7 @@ with tabs[0]:
                 else:
                     vi = v_master[v_master['거래처명'] == p_vn].iloc[0]
 
-                    upsert_supabase_data("payments", {
+                    save_ok = upsert_supabase_data("payments", {
                         "id": get_multiple_available_ids(1)[0],
                         "발주번호": p_oid if p_oid != "없음" else None,
                         "입금일": p_date.strftime("%Y-%m-%d"),
@@ -257,8 +272,12 @@ with tabs[0]:
                         "예금주": vi['예금주']
                     })
 
-                    st.success("저장 완료")
-                    st.rerun()
+                    if save_ok:
+                        st.session_state.pay_notice = {
+                            "type": "success",
+                            "msg": "입금 내역 저장 완료"
+                        }
+                        st.rerun()
 
     # -------------------------------
     # 🔵 CSV 업로드
@@ -317,7 +336,12 @@ with tabs[0]:
 
             if upsert_supabase_data("payments", up_list):
                 st.session_state.pay_up_key += 1
+                st.session_state.pay_notice = {
+                    "type": "success",
+                    "msg": f"CSV 입금 내역 일괄 저장 완료: {len(up_list)}건"
+                }
                 st.rerun()
+
 
 # --- [Tab 1] 발주서 등록 및 관리 ---
 with tabs[1]:
@@ -699,11 +723,11 @@ with tabs[2]:
 
             summary = summary.rename(columns={
                 '발주총액': '총발주액',
-                '한화환산액': '한환산액'
-            })[['유형', '총발주액', '총지급액', '선급금액', '한환산액']]
+                '한화환산액': '한화환산액'
+            })[['유형', '총발주액', '총지급액', '선급금액', '한화환산액']]
 
             st.dataframe(
-                summary.style.format('{:,.0f}', subset=['총발주액', '총지급액', '선급금액', '한환산액']),
+                summary.style.format('{:,.0f}', subset=['총발주액', '총지급액', '선급금액', '한화화환산액']),
                 hide_index=True,
                 use_container_width=True,
                 height=220
