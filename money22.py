@@ -582,10 +582,24 @@ with tabs[1]:
         else:
             st.info("내역 없음")
 
-
 # --- [Tab 2] 상세 내역 및 통합 정산 ---
 with tabs[2]:
     st.header("📋 상세 내역 및 통합 정산")
+
+    if 'detail_notice' in st.session_state:
+        notice_type = st.session_state.detail_notice.get("type", "success")
+        notice_msg = st.session_state.detail_notice.get("msg", "")
+
+        if notice_type == "success":
+            st.success(notice_msg)
+        elif notice_type == "warning":
+            st.warning(notice_msg)
+        elif notice_type == "error":
+            st.error(notice_msg)
+        else:
+            st.info(notice_msg)
+
+        del st.session_state.detail_notice
 
     p_all = get_supabase_data("payments")
     o_all = get_supabase_data("orders")
@@ -638,6 +652,9 @@ with tabs[2]:
             search_vendor = st.text_input("🔍 업체 검색")
             search_product = st.text_input("🔍 상품 검색")
             search_order = st.text_input("🔍 발주차수 검색")
+
+            if search_vendor or search_product or search_order:
+                st.success("검색 완료")
 
         start_date = pd.to_datetime(f"{start_y}-{start_m:02d}-01")
         end_date = pd.to_datetime(f"{end_y}-{end_m:02d}-01") + pd.offsets.MonthEnd(1)
@@ -719,15 +736,13 @@ with tabs[2]:
 
             summary = pd.merge(summary, order_sum, on='유형', how='left').fillna(0)
             summary['총지급액'] = summary['실입금액']
-            summary['선급금액'] = summary['선급금액']
 
             summary = summary.rename(columns={
-                '발주총액': '총발주액',
-                '한화환산액': '한화환산액'
+                '발주총액': '총발주액'
             })[['유형', '총발주액', '총지급액', '선급금액', '한화환산액']]
 
             st.dataframe(
-                summary.style.format('{:,.0f}', subset=['총발주액', '총지급액', '선급금액', '한화화환산액']),
+                summary.style.format('{:,.0f}', subset=['총발주액', '총지급액', '선급금액', '한화환산액']),
                 hide_index=True,
                 use_container_width=True,
                 height=220
@@ -837,7 +852,10 @@ with tabs[2]:
                             supabase.table("payments").update(up_data).eq("id", tid).execute()
                             success_count += 1
 
-                    st.success(f"{success_count}건 저장 완료! 페이지를 새로고침합니다.")
+                    st.session_state.detail_notice = {
+                        "type": "success",
+                        "msg": "수정 완료"
+                    }
                     st.rerun()
 
                 except Exception as e:
@@ -855,7 +873,10 @@ with tabs[2]:
                     for tid in delete_ids:
                         supabase.table("payments").update({"삭제": True}).eq("id", int(tid)).execute()
 
-                    st.success(f"{len(delete_ids)}건 삭제 처리 완료")
+                    st.session_state.detail_notice = {
+                        "type": "success",
+                        "msg": "삭제 완료"
+                    }
                     st.rerun()
 
             except Exception as e:
@@ -871,7 +892,10 @@ with tabs[2]:
                     for tid in restore_ids:
                         supabase.table("payments").update({"삭제": False}).eq("id", int(tid)).execute()
 
-                    st.success(f"{len(restore_ids)}건 복구 완료")
+                    st.session_state.detail_notice = {
+                        "type": "success",
+                        "msg": "복구 완료"
+                    }
                     st.rerun()
 
             except Exception as e:
@@ -886,6 +910,8 @@ with tabs[2]:
 
     else:
         st.info("입금 내역 없음")
+
+
         
 # --- [Tab 3] 거래처 관리 ---
 with tabs[3]:
