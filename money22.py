@@ -753,12 +753,23 @@ with tabs[2]:
 
         def highlight_row(row):
             style = [''] * len(row)
-            if row['진행상태'] == "✅ 마감":
+            is_closed = row['진행상태'] == "✅ 마감"
+            prepay_amount = to_float(row['선급금액'])
+            remain_amount = to_float(row['미수잔액'])
+
+            if is_closed:
                 style = ['background-color: #f2f2f2; color: #999;'] * len(row)
-            if row['선급금액'] > 0:
+
+                if prepay_amount > 0:
+                    style[row.index.get_loc('선급금액')] = 'background-color: #f2f2f2; color: red;'
+
+                return style
+
+            if prepay_amount > 0:
                 style[row.index.get_loc('선급금액')] = 'color: red;'
-            if row['미수잔액'] > 0:
+            if remain_amount > 0:
                 style[row.index.get_loc('미수잔액')] = 'color: blue;'
+
             return style
 
         st.dataframe(
