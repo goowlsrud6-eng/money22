@@ -581,7 +581,6 @@ with tabs[1]:
 
         else:
             st.info("내역 없음")
-
 # --- [Tab 2] 상세 내역 및 통합 정산 ---
 with tabs[2]:
     st.header("📋 상세 내역 및 통합 정산")
@@ -743,6 +742,7 @@ with tabs[2]:
         }).reset_index()
 
         s_df = pd.merge(o_all, p_agg, on='발주번호', how='left').fillna(0)
+        s_df = s_df.sort_values(by=["마감여부", "발주일"], ascending=[True, False])
         s_df['미수잔액'] = s_df['발주총액'] - (s_df['실입금액'] + s_df['선급금액'])
         s_df['진행상태'] = s_df['마감여부'].apply(lambda x: "✅ 마감" if x == 1 else "⏳ 진행")
 
@@ -907,8 +907,6 @@ with tabs[2]:
 
     else:
         st.info("입금 내역 없음")
-
-
 
         
 # --- [Tab 3] 거래처 관리 ---
