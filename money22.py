@@ -478,7 +478,6 @@ with tabs[1]:
         else:
             st.info("내역 없음")
 
-
 # --- [Tab 2] 상세 내역 및 통합 정산 ---
 with tabs[2]:
     st.header("📋 상세 내역 및 통합 정산")
@@ -590,7 +589,22 @@ with tabs[2]:
         with f_right:
             st.subheader("📊 필터 요약")
 
-            order_sum = o_all.groupby('유형')['발주총액'].sum().reset_index() if not o_all.empty else pd.DataFrame(columns=['유형', '발주총액'])
+            order_base = o_all.copy() if not o_all.empty else pd.DataFrame(columns=['유형', '발주총액'])
+
+            if not order_base.empty:
+                if filter_cat != "전체 유형":
+                    order_base = order_base[order_base['유형'] == filter_cat]
+                if search_vendor:
+                    order_base = order_base[order_base['거래처명'].astype(str).str.contains(search_vendor, case=False, na=False)]
+                if search_product:
+                    order_base = order_base[order_base['상품명'].astype(str).str.contains(search_product, case=False, na=False)]
+                if search_order:
+                    order_base = order_base[order_base['발주차수'].astype(str).str.contains(search_order, case=False, na=False)]
+
+                order_base['발주총액'] = pd.to_numeric(order_base['발주총액'], errors='coerce').fillna(0)
+                order_sum = order_base.groupby('유형')['발주총액'].sum().reset_index()
+            else:
+                order_sum = pd.DataFrame(columns=['유형', '발주총액'])
 
             summary = calc_filtered.groupby('유형').agg({
                 '실입금액': 'sum',
@@ -599,16 +613,16 @@ with tabs[2]:
             }).reset_index()
 
             summary = pd.merge(summary, order_sum, on='유형', how='left').fillna(0)
-            summary['총지급액'] = summary['실입금액'] + summary['선급금액']
-            summary['선급금잔액'] = summary['발주총액'] - summary['총지급액']
+            summary['총지급액'] = summary['실입금액']
+            summary['선급금액'] = summary['선급금액']
 
             summary = summary.rename(columns={
                 '발주총액': '총발주액',
                 '한화환산액': '한환산액'
-            })[['유형', '총발주액', '총지급액', '선급금잔액', '한환산액']]
+            })[['유형', '총발주액', '총지급액', '선급금액', '한환산액']]
 
             st.dataframe(
-                summary.style.format('{:,.0f}', subset=['총발주액', '총지급액', '선급금잔액', '한환산액']),
+                summary.style.format('{:,.0f}', subset=['총발주액', '총지급액', '선급금액', '한환산액']),
                 hide_index=True,
                 use_container_width=True,
                 height=220
@@ -767,7 +781,6 @@ with tabs[2]:
 
     else:
         st.info("입금 내역 없음")
-
         
 # --- [Tab 3] 거래처 관리 ---
 with tabs[3]:
