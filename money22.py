@@ -323,6 +323,21 @@ with tabs[0]:
 with tabs[1]:
     st.header("📦 발주서 등록 및 관리")
 
+    if 'order_notice' in st.session_state:
+        notice_type = st.session_state.order_notice.get("type", "success")
+        notice_msg = st.session_state.order_notice.get("msg", "")
+
+        if notice_type == "success":
+            st.success(notice_msg)
+        elif notice_type == "warning":
+            st.warning(notice_msg)
+        elif notice_type == "error":
+            st.error(notice_msg)
+        else:
+            st.info(notice_msg)
+
+        del st.session_state.order_notice
+
     v_master = get_supabase_data("vendors")
     o_data = get_supabase_data("orders")
 
@@ -339,11 +354,29 @@ with tabs[1]:
         )
 
         if o_files and st.button("🚀 분석 실행", use_container_width=True):
+            success_count = 0
+            fail_msgs = []
+
             for f in o_files:
                 success, msg = process_ecount_v136_cloud(f)
-                if not success:
-                    st.error(f"[{f.name}] {msg}")
+                if success:
+                    success_count += 1
+                else:
+                    fail_msgs.append(f"[{f.name}] {msg}")
+
             st.session_state.order_up_key += 1
+
+            if fail_msgs:
+                st.session_state.order_notice = {
+                    "type": "warning",
+                    "msg": f"분석 완료: 성공 {success_count}건, 실패 {len(fail_msgs)}건\n" + "\n".join(fail_msgs)
+                }
+            else:
+                st.session_state.order_notice = {
+                    "type": "success",
+                    "msg": f"발주서 분석 및 등록 완료: {success_count}건"
+                }
+
             st.rerun()
 
         st.divider()
@@ -382,8 +415,14 @@ with tabs[1]:
                         "삭제여부": 0
                     }
 
-                    upsert_supabase_data("orders", new_order)
-                    st.rerun()
+                    if upsert_supabase_data("orders", new_order):
+                        st.session_state.order_notice = {
+                            "type": "success",
+                            "msg": f"발주서 [{m_oid}] 등록 완료"
+                        }
+                        st.rerun()
+                else:
+                    st.error("발주번호와 거래처를 입력하세요.")
 
     with c2:
         st.subheader("발주 목록")
@@ -391,6 +430,11 @@ with tabs[1]:
         if not o_data.empty:
             show_deleted = st.checkbox("삭제된 발주 보기")
             show_closed = st.checkbox("마감된 발주 포함")
+
+            order_search = st.text_input(
+                "🔍 발주 검색",
+                placeholder="발주번호, 차수, 거래처명, 상품명, 유형, 통화 검색"
+            )
 
             disp_o = o_data.copy()
 
@@ -401,6 +445,25 @@ with tabs[1]:
 
             if not show_closed:
                 disp_o = disp_o[disp_o['마감여부'] == 0]
+
+            if order_search:
+                search_cols = [
+                    c for c in ['발주번호', '발주차수', '거래처명', '상품명', '유형', '통화']
+                    if c in disp_o.columns
+                ]
+
+                search_mask = pd.Series(False, index=disp_o.index)
+
+                for col in search_cols:
+                    search_mask = search_mask | disp_o[col].astype(str).str.contains(
+                        order_search,
+                        case=False,
+                        na=False
+                    )
+
+                disp_o = disp_o[search_mask]
+
+            st.caption(f"조회 결과: {len(disp_o)}건")
 
             disp_o['상태'] = disp_o.apply(
                 lambda r: "🗑️" if r['삭제여부'] == 1 else ("🔴" if r['마감여부'] == 1 else "🟢"),
@@ -434,49 +497,67 @@ with tabs[1]:
                     final_save = ev_o.drop(columns=['상태', '삭제'], errors='ignore')
                     clean_data = final_save.fillna("").to_dict(orient='records')
 
-                    upsert_supabase_data("orders", clean_data)
+                    if upsert_supabase_data("orders", clean_data):
+                        for _, r in ev_o.iterrows():
+                            sync_payload = {
+                                "거래처명": str(r['거래처명']).strip(),
+                                "상품명": str(r['상품명']).strip(),
+                                "유형": str(r['유형']).strip()
+                            }
 
-                    for _, r in ev_o.iterrows():
-                        sync_payload = {
-                            "거래처명": str(r['거래처명']).strip(),
-                            "상품명": str(r['상품명']).strip(),
-                            "유형": str(r['유형']).strip()
+                            supabase.table("payments") \
+                                .update(sync_payload) \
+                                .eq("발주번호", str(r['발주번호'])) \
+                                .execute()
+
+                        st.session_state.order_notice = {
+                            "type": "success",
+                            "msg": f"발주 목록 변경사항 저장 완료: {len(clean_data)}건"
                         }
-
-                        supabase.table("payments") \
-                            .update(sync_payload) \
-                            .eq("발주번호", str(r['발주번호'])) \
-                            .execute()
-
-                    st.rerun()
+                        st.rerun()
 
             with col_btn2:
                 if st.button("🗑️ 삭제", use_container_width=True):
                     del_list = ev_o[ev_o['삭제'] == True]
 
-                    for oid in del_list['발주번호']:
-                        supabase.table("orders") \
-                            .update({"삭제여부": 1}) \
-                            .eq("발주번호", oid) \
-                            .execute()
+                    if del_list.empty:
+                        st.info("삭제할 발주를 선택하세요.")
+                    else:
+                        for oid in del_list['발주번호']:
+                            supabase.table("orders") \
+                                .update({"삭제여부": 1}) \
+                                .eq("발주번호", oid) \
+                                .execute()
 
-                    st.rerun()
+                        st.session_state.order_notice = {
+                            "type": "success",
+                            "msg": f"선택한 발주 삭제 완료: {len(del_list)}건"
+                        }
+                        st.rerun()
 
             with col_btn3:
                 if show_deleted:
                     if st.button("♻️ 복구", use_container_width=True):
                         restore_list = ev_o[ev_o['삭제'] == True]
 
-                        for oid in restore_list['발주번호']:
-                            supabase.table("orders") \
-                                .update({"삭제여부": 0}) \
-                                .eq("발주번호", oid) \
-                                .execute()
+                        if restore_list.empty:
+                            st.info("복구할 발주를 선택하세요.")
+                        else:
+                            for oid in restore_list['발주번호']:
+                                supabase.table("orders") \
+                                    .update({"삭제여부": 0}) \
+                                    .eq("발주번호", oid) \
+                                    .execute()
 
-                        st.rerun()
+                            st.session_state.order_notice = {
+                                "type": "success",
+                                "msg": f"선택한 발주 복구 완료: {len(restore_list)}건"
+                            }
+                            st.rerun()
 
         else:
             st.info("내역 없음")
+
 
 # --- [Tab 2] 상세 내역 및 통합 정산 ---
 with tabs[2]:
