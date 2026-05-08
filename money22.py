@@ -593,9 +593,23 @@ with tabs[2]:
         if '삭제' not in p_all.columns:
             p_all['삭제'] = False
 
-        p_all['삭제'] = p_all['삭제'].fillna(False).astype(bool)
+        p_all['삭제'] = p_all['삭제'].apply(
+            lambda x: True if str(x).lower() in ["true", "1", "yes", "y"] else False
+        )
+
+        if '실입금액' not in p_all.columns:
+            p_all['실입금액'] = 0
+        if '선급금액' not in p_all.columns:
+            p_all['선급금액'] = 0
+
+        p_all['실입금액'] = pd.to_numeric(p_all['실입금액'], errors='coerce').fillna(0)
+        p_all['선급금액'] = pd.to_numeric(p_all['선급금액'], errors='coerce').fillna(0)
 
         if not o_all.empty:
+            if '발주총액' not in o_all.columns:
+                o_all['발주총액'] = 0
+            o_all['발주총액'] = pd.to_numeric(o_all['발주총액'], errors='coerce').fillna(0)
+
             ref_dict = o_all.set_index('발주번호')[['거래처명', '상품명', '유형', '발주차수']].to_dict('index')
 
             def fill_info(row):
@@ -611,6 +625,20 @@ with tabs[2]:
                 return row
 
             p_all = p_all.apply(fill_info, axis=1)
+
+        def make_settle_type(row):
+            base_type = to_str(row.get('유형'))
+            currency = to_str(row.get('통화')).upper()
+
+            if base_type == "제작(수입)" and currency in ["CNY", "USD"]:
+                return f"제작({currency})"
+
+            return base_type
+
+        p_all['정산유형'] = p_all.apply(make_settle_type, axis=1)
+
+        if not o_all.empty:
+            o_all['정산유형'] = o_all.apply(make_settle_type, axis=1)
 
         if '메모' in p_all.columns and '송금사유' not in p_all.columns:
             p_all['송금사유'] = p_all['메모']
@@ -632,7 +660,10 @@ with tabs[2]:
             start_m = f3.selectbox("시작 월", list(range(1, 13)), index=0)
             end_m = f4.selectbox("종료 월", list(range(1, 13)), index=11)
 
-            filter_cat = st.selectbox("유형 필터", ["전체 유형"] + CATEGORIES)
+            filter_options = ["전체 유형"] + CATEGORIES + ["제작(CNY)", "제작(USD)"]
+            filter_options = list(dict.fromkeys(filter_options))
+
+            filter_cat = st.selectbox("유형 필터", filter_options)
             search_vendor = st.text_input("🔍 업체 검색")
             search_product = st.text_input("🔍 상품 검색")
             search_order = st.text_input("🔍 발주차수 검색")
@@ -649,7 +680,11 @@ with tabs[2]:
         ].copy()
 
         if filter_cat != "전체 유형":
-            filtered = filtered[filtered['유형'] == filter_cat]
+            if filter_cat in ["제작(CNY)", "제작(USD)"]:
+                filtered = filtered[filtered['정산유형'] == filter_cat]
+            else:
+                filtered = filtered[filtered['유형'] == filter_cat]
+
         if search_vendor:
             filtered = filtered[filtered['거래처명'].str.contains(search_vendor, case=False, na=False)]
         if search_product:
@@ -657,7 +692,6 @@ with tabs[2]:
         if search_order:
             filtered = filtered[filtered['발주차수'].astype(str).str.contains(search_order, case=False, na=False)]
 
-        # 계산용 데이터: 삭제된 입금은 항상 제외
         calc_filtered = filtered[filtered['삭제'] != True].copy()
         calc_p_all = p_all[p_all['삭제'] != True].copy()
 
@@ -695,11 +729,15 @@ with tabs[2]:
         with f_right:
             st.subheader("📊 필터 요약")
 
-            order_base = o_all.copy() if not o_all.empty else pd.DataFrame(columns=['유형', '발주총액'])
+            order_base = o_all.copy() if not o_all.empty else pd.DataFrame(columns=['정산유형', '유형', '발주총액'])
 
             if not order_base.empty:
                 if filter_cat != "전체 유형":
-                    order_base = order_base[order_base['유형'] == filter_cat]
+                    if filter_cat in ["제작(CNY)", "제작(USD)"]:
+                        order_base = order_base[order_base['정산유형'] == filter_cat]
+                    else:
+                        order_base = order_base[order_base['유형'] == filter_cat]
+
                 if search_vendor:
                     order_base = order_base[order_base['거래처명'].astype(str).str.contains(search_vendor, case=False, na=False)]
                 if search_product:
@@ -708,16 +746,19 @@ with tabs[2]:
                     order_base = order_base[order_base['발주차수'].astype(str).str.contains(search_order, case=False, na=False)]
 
                 order_base['발주총액'] = pd.to_numeric(order_base['발주총액'], errors='coerce').fillna(0)
-                order_sum = order_base.groupby('유형')['발주총액'].sum().reset_index()
+
+                order_sum = order_base.groupby('정산유형')['발주총액'].sum().reset_index()
+                order_sum = order_sum.rename(columns={'정산유형': '유형'})
             else:
                 order_sum = pd.DataFrame(columns=['유형', '발주총액'])
 
-            summary = calc_filtered.groupby('유형').agg({
+            summary = calc_filtered.groupby('정산유형').agg({
                 '실입금액': 'sum',
                 '선급금액': 'sum',
                 '한화환산액': 'sum'
             }).reset_index()
 
+            summary = summary.rename(columns={'정산유형': '유형'})
             summary = pd.merge(summary, order_sum, on='유형', how='left').fillna(0)
             summary['총지급액'] = summary['실입금액']
 
@@ -726,7 +767,7 @@ with tabs[2]:
             })[['유형', '총발주액', '총지급액', '선급금액', '한화환산액']]
 
             st.dataframe(
-                summary.style.format('{:,.0f}', subset=['총발주액', '총지급액', '선급금액', '한화환산액']),
+                summary.style.format('{:,.2f}', subset=['총발주액', '총지급액', '선급금액', '한화환산액']),
                 hide_index=True,
                 use_container_width=True,
                 height=220
@@ -736,50 +777,53 @@ with tabs[2]:
 
         st.subheader("🔍 발주별 정산 및 미수금 현황")
 
-        p_agg = calc_p_all.groupby('발주번호').agg({
-            '실입금액': 'sum',
-            '선급금액': 'sum'
-        }).reset_index()
+        if not o_all.empty:
+            p_agg = calc_p_all.groupby('발주번호').agg({
+                '실입금액': 'sum',
+                '선급금액': 'sum'
+            }).reset_index()
 
-        s_df = pd.merge(o_all, p_agg, on='발주번호', how='left').fillna(0)
-        s_df = s_df.sort_values(by=["마감여부", "발주일"], ascending=[True, False])
-        s_df['미수잔액'] = s_df['발주총액'] - (s_df['실입금액'] + s_df['선급금액'])
-        s_df['진행상태'] = s_df['마감여부'].apply(lambda x: "✅ 마감" if x == 1 else "⏳ 진행")
+            s_df = pd.merge(o_all, p_agg, on='발주번호', how='left').fillna(0)
+            s_df = s_df.sort_values(by=["마감여부", "발주일"], ascending=[True, False])
+            s_df['미수잔액'] = s_df['발주총액'] - (s_df['실입금액'] + s_df['선급금액'])
+            s_df['진행상태'] = s_df['마감여부'].apply(lambda x: "✅ 마감" if x == 1 else "⏳ 진행")
 
-        disp_s = s_df[[
-            '발주번호', '발주차수', '진행상태', '거래처명', '상품명',
-            '발주총액', '실입금액', '선급금액', '미수잔액', '통화'
-        ]]
+            disp_s = s_df[[
+                '발주번호', '발주차수', '진행상태', '거래처명', '상품명',
+                '발주총액', '실입금액', '선급금액', '미수잔액', '통화'
+            ]]
 
-        def highlight_row(row):
-            style = [''] * len(row)
-            is_closed = row['진행상태'] == "✅ 마감"
-            prepay_amount = to_float(row['선급금액'])
-            remain_amount = to_float(row['미수잔액'])
+            def highlight_row(row):
+                style = [''] * len(row)
+                is_closed = row['진행상태'] == "✅ 마감"
+                prepay_amount = to_float(row['선급금액'])
+                remain_amount = to_float(row['미수잔액'])
 
-            if is_closed:
-                style = ['background-color: #f2f2f2; color: #999;'] * len(row)
+                if is_closed:
+                    style = ['background-color: #f2f2f2; color: #999;'] * len(row)
+
+                    if prepay_amount > 0:
+                        style[row.index.get_loc('선급금액')] = 'background-color: #f2f2f2; color: red;'
+
+                    return style
 
                 if prepay_amount > 0:
-                    style[row.index.get_loc('선급금액')] = 'background-color: #f2f2f2; color: red;'
+                    style[row.index.get_loc('선급금액')] = 'color: red;'
+                if remain_amount > 0:
+                    style[row.index.get_loc('미수잔액')] = 'color: blue;'
 
                 return style
 
-            if prepay_amount > 0:
-                style[row.index.get_loc('선급금액')] = 'color: red;'
-            if remain_amount > 0:
-                style[row.index.get_loc('미수잔액')] = 'color: blue;'
-
-            return style
-
-        st.dataframe(
-            disp_s.style.apply(highlight_row, axis=1).format(
-                '{:,.0f}',
-                subset=['발주총액', '실입금액', '선급금액', '미수잔액']
-            ),
-            hide_index=True,
-            use_container_width=True
-        )
+            st.dataframe(
+                disp_s.style.apply(highlight_row, axis=1).format(
+                    '{:,.2f}',
+                    subset=['발주총액', '실입금액', '선급금액', '미수잔액']
+                ),
+                hide_index=True,
+                use_container_width=True
+            )
+        else:
+            st.info("발주 내역 없음")
 
         st.divider()
 
@@ -828,9 +872,9 @@ with tabs[2]:
             column_config={
                 "id": st.column_config.NumberColumn("ID", disabled=True),
                 "삭제": st.column_config.CheckboxColumn("삭제"),
-                "실입금액": st.column_config.NumberColumn("실입금액", format="%,.0f", step=1),
-                "선급금액": st.column_config.NumberColumn("선급금액", format="%,.0f", step=1),
-                "한화환산액": st.column_config.NumberColumn("한화환산액", format="%,.0f", disabled=True),
+                "실입금액": st.column_config.NumberColumn("실입금액", format="%,.2f", step=0.01),
+                "선급금액": st.column_config.NumberColumn("선급금액", format="%,.2f", step=0.01),
+                "한화환산액": st.column_config.NumberColumn("한화환산액", format="%,.2f", disabled=True),
                 "입금일": st.column_config.TextColumn("입금일"),
                 "송금사유": st.column_config.TextColumn("송금사유")
             }
@@ -849,9 +893,9 @@ with tabs[2]:
                         up_data = {}
 
                         if "실입금액" in changes:
-                            up_data["실입금액"] = to_money(changes["실입금액"])
+                            up_data["실입금액"] = to_float(changes["실입금액"])
                         if "선급금액" in changes:
-                            up_data["선급금액"] = to_money(changes["선급금액"])
+                            up_data["선급금액"] = to_float(changes["선급금액"])
                         if "입금일" in changes:
                             up_data["입금일"] = str(changes["입금일"])
                         if "송금사유" in changes:
@@ -912,9 +956,9 @@ with tabs[2]:
         st.divider()
 
         m1, m2, m3 = st.columns(3)
-        m1.metric("총 지급액 (KRW)", f"{calc_filtered['한화환산액'].sum():,.0f} 원")
-        m2.metric("총 지급액 (USD)", f"${calc_filtered[calc_filtered['통화'] == 'USD']['실입금액'].sum():,.0f}")
-        m3.metric("총 지급액 (CNY)", f"¥{calc_filtered[calc_filtered['통화'] == 'CNY']['실입금액'].sum():,.0f}")
+        m1.metric("총 지급액 (KRW)", f"{calc_filtered['한화환산액'].sum():,.2f} 원")
+        m2.metric("총 지급액 (USD)", f"${calc_filtered[calc_filtered['통화'] == 'USD']['실입금액'].sum():,.2f}")
+        m3.metric("총 지급액 (CNY)", f"¥{calc_filtered[calc_filtered['통화'] == 'CNY']['실입금액'].sum():,.2f}")
 
     else:
         st.info("입금 내역 없음")
