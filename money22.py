@@ -229,8 +229,8 @@ with tabs[0]:
 
             r3c1, r3c2, r3c3 = st.columns(3)
 
-            p_dep = r3c1.number_input("실입금액", step=1)
-            p_pre = r3c2.number_input("선급금액", step=1)
+            p_dep = r3c1.number_input("실입금액", min_value=0.0, step=0.01, format="%.2f")
+            p_pre = r3c2.number_input("선급금액", min_value=0.0, step=0.01, format="%.2f")
 
             cur_list = ["한화", "USD", "CNY"]
             p_cur = r3c3.selectbox(
@@ -264,8 +264,8 @@ with tabs[0]:
                         "거래처명": p_vn,
                         "상품명": p_pr,
                         "통화": p_cur,
-                        "실입금액": to_money(p_dep),
-                        "선급금액": to_money(p_pre),
+                        "실입금액": round(float(p_dep), 2),
+                        "선급금액": round(float(p_pre), 2),
                         "메모": p_memo,
                         "은행": vi['은행'],
                         "계좌번호": vi['계좌번호'],
@@ -326,8 +326,8 @@ with tabs[0]:
                     "거래처명": vn_f,
                     "상품명": match_o['상품명'] if match_o is not None else to_str(r.get('상품명')),
                     "통화": match_o['통화'] if match_o is not None else "한화",
-                    "실입금액": to_money(r.get('실입금액')),
-                    "선급금액": to_money(r.get('선급금액')),
+                    "실입금액": round(to_float(r.get('실입금액')), 2),
+                    "선급금액": round(to_float(r.get('선급금액')), 2),
                     "메모": to_str(r.get('송금사유')),
                     "은행": vi['은행'] if vi is not None else "",
                     "계좌번호": vi['계좌번호'] if vi is not None else "",
