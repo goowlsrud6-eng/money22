@@ -766,11 +766,13 @@ with tabs[2]:
                 '발주총액': '총발주액'
             })[['유형', '총발주액', '총지급액', '선급금액', '한화환산액']]
 
+            summary_height = min(420, 38 + len(summary) * 35)
             st.dataframe(
                 summary.style.format('{:,.2f}', subset=['총발주액', '총지급액', '선급금액', '한화환산액']),
                 hide_index=True,
                 use_container_width=True,
-                height=220
+                height=summary_height
+                
             )
 
         st.divider()
