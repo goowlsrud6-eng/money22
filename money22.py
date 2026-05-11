@@ -229,8 +229,8 @@ with tabs[0]:
 
             r3c1, r3c2, r3c3 = st.columns(3)
 
-            p_dep = r3c1.number_input("실입금액", min_value=0.0, step=0.01, format="%.2f")
-            p_pre = r3c2.number_input("선급금액", min_value=0.0, step=0.01, format="%.2f")
+            p_dep = r3c1.number_input("실입금액", value=0.0, step=0.01, format="%.2f")
+            p_pre = r3c2.number_input("선급금액", value=0.0, step=0.01, format="%.2f")
 
             cur_list = ["한화", "USD", "CNY"]
             p_cur = r3c3.selectbox(
