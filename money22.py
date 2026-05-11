@@ -184,35 +184,41 @@ with tabs[0]:
 
     col_input, col_excel = st.columns([1.5, 1])
 
+    # -------------------------------
+    # 🔵 수기 입력 (자동 연동 핵심)
+    # -------------------------------
     with col_input:
         st.subheader("1. 수기 직접 입력")
 
         form_key = st.session_state.pay_form_reset_key
 
-        with st.form(f"manual_pay_form_{form_key}", clear_on_submit=True):
+        # 발주번호는 form 밖에 있어야 선택 즉시 자동 연동값이 갱신됨
+        p_oid = st.selectbox(
+            "발주번호 연동",
+            ["없음"] + (list(o_active['발주번호']) if not o_active.empty else []),
+            key=f"p_oid_{form_key}"
+        )
 
-            p_oid = st.selectbox(
-                "발주번호 연동",
-                ["없음"] + (list(o_active['발주번호']) if not o_active.empty else []),
-                key=f"p_oid_{form_key}"
-            )
+        if p_oid != "없음":
+            match = o_active[o_active['발주번호'] == p_oid].iloc[0]
+            auto_vn = match['거래처명']
+            auto_type = match['유형']
+            auto_prod = match['상품명']
+            auto_cur = match['통화']
+        else:
+            auto_vn = "선택"
+            auto_type = "선택"
+            auto_prod = ""
+            auto_cur = "한화"
 
-            if p_oid != "없음":
-                match = o_active[o_active['발주번호'] == p_oid].iloc[0]
-                auto_vn = match['거래처명']
-                auto_type = match['유형']
-                auto_prod = match['상품명']
-                auto_cur = match['통화']
-            else:
-                auto_vn = "선택"
-                auto_type = "선택"
-                auto_prod = ""
-                auto_cur = "한화"
+        auto_key = f"{form_key}_{str(p_oid)}"
+
+        with st.form(f"manual_pay_form_{auto_key}", clear_on_submit=True):
 
             p_date = st.date_input(
                 "입금일자",
                 value=datetime.now(),
-                key=f"p_date_{form_key}"
+                key=f"p_date_{auto_key}"
             )
 
             vn_list = ["선택"] + (list(v_master['거래처명'].unique()) if not v_master.empty else [])
@@ -221,20 +227,20 @@ with tabs[0]:
                 "거래처",
                 vn_list,
                 index=vn_list.index(auto_vn) if auto_vn in vn_list else 0,
-                key=f"p_vn_{form_key}"
+                key=f"p_vn_{auto_key}"
             )
 
             p_ct = st.selectbox(
                 "유형 분류",
                 ["선택"] + CATEGORIES,
                 index=(["선택"] + CATEGORIES).index(auto_type) if auto_type in CATEGORIES else 0,
-                key=f"p_ct_{form_key}"
+                key=f"p_ct_{auto_key}"
             )
 
             p_pr = st.text_input(
                 "상품명",
                 value=auto_prod,
-                key=f"p_pr_{form_key}"
+                key=f"p_pr_{auto_key}"
             )
 
             r3c1, r3c2, r3c3 = st.columns(3)
@@ -244,7 +250,7 @@ with tabs[0]:
                 value=0.0,
                 step=0.01,
                 format="%.2f",
-                key=f"p_dep_{form_key}"
+                key=f"p_dep_{auto_key}"
             )
 
             p_pre = r3c2.number_input(
@@ -252,20 +258,21 @@ with tabs[0]:
                 value=0.0,
                 step=0.01,
                 format="%.2f",
-                key=f"p_pre_{form_key}"
+                key=f"p_pre_{auto_key}"
             )
 
             cur_list = ["한화", "USD", "CNY"]
+
             p_cur = r3c3.selectbox(
                 "거래통화",
                 cur_list,
                 index=cur_list.index(auto_cur) if auto_cur in cur_list else 0,
-                key=f"p_cur_{form_key}"
+                key=f"p_cur_{auto_key}"
             )
 
             p_memo = st.text_input(
                 "비고 (송금 사유 등)",
-                key=f"p_memo_{form_key}"
+                key=f"p_memo_{auto_key}"
             )
 
             if st.form_submit_button("입금 내역 저장"):
@@ -306,6 +313,9 @@ with tabs[0]:
                         }
                         st.rerun()
 
+    # -------------------------------
+    # 🔵 CSV 업로드
+    # -------------------------------
     with col_excel:
         st.subheader("2. CSV 일괄 업로드 (v136 지능형 매칭)")
 
@@ -365,7 +375,6 @@ with tabs[0]:
                     "msg": f"CSV 입금 내역 일괄 저장 완료: {len(up_list)}건"
                 }
                 st.rerun()
-
 
 
 # --- [Tab 1] 발주서 등록 및 관리 ---
