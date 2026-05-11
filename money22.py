@@ -160,6 +160,9 @@ tabs = st.tabs(["입금 등록", "발주서 등록", "상세내역 및 정산", 
 with tabs[0]:
     st.header("입금 내역 등록 및 관리")
 
+    if 'pay_form_reset_key' not in st.session_state:
+        st.session_state.pay_form_reset_key = 0
+
     if 'pay_notice' in st.session_state:
         notice_type = st.session_state.pay_notice.get("type", "success")
         notice_msg = st.session_state.pay_notice.get("msg", "")
@@ -181,21 +184,19 @@ with tabs[0]:
 
     col_input, col_excel = st.columns([1.5, 1])
 
-    # -------------------------------
-    # 🔵 수기 입력 (자동 연동 핵심)
-    # -------------------------------
     with col_input:
         st.subheader("1. 수기 직접 입력")
 
-        with st.form("manual_pay_form", clear_on_submit=True):
+        form_key = st.session_state.pay_form_reset_key
 
-            # 발주번호 선택
+        with st.form(f"manual_pay_form_{form_key}", clear_on_submit=True):
+
             p_oid = st.selectbox(
                 "발주번호 연동",
-                ["없음"] + (list(o_active['발주번호']) if not o_active.empty else [])
+                ["없음"] + (list(o_active['발주번호']) if not o_active.empty else []),
+                key=f"p_oid_{form_key}"
             )
 
-            # 🔥 발주 자동 매칭
             if p_oid != "없음":
                 match = o_active[o_active['발주번호'] == p_oid].iloc[0]
                 auto_vn = match['거래처명']
@@ -208,40 +209,65 @@ with tabs[0]:
                 auto_prod = ""
                 auto_cur = "한화"
 
-            # 입력 필드
-            p_date = st.date_input("입금일자", value=datetime.now())
+            p_date = st.date_input(
+                "입금일자",
+                value=datetime.now(),
+                key=f"p_date_{form_key}"
+            )
 
             vn_list = ["선택"] + (list(v_master['거래처명'].unique()) if not v_master.empty else [])
 
             p_vn = st.selectbox(
                 "거래처",
                 vn_list,
-                index=vn_list.index(auto_vn) if auto_vn in vn_list else 0
+                index=vn_list.index(auto_vn) if auto_vn in vn_list else 0,
+                key=f"p_vn_{form_key}"
             )
 
             p_ct = st.selectbox(
                 "유형 분류",
                 ["선택"] + CATEGORIES,
-                index=(["선택"] + CATEGORIES).index(auto_type) if auto_type in CATEGORIES else 0
+                index=(["선택"] + CATEGORIES).index(auto_type) if auto_type in CATEGORIES else 0,
+                key=f"p_ct_{form_key}"
             )
 
-            p_pr = st.text_input("상품명", value=auto_prod)
+            p_pr = st.text_input(
+                "상품명",
+                value=auto_prod,
+                key=f"p_pr_{form_key}"
+            )
 
             r3c1, r3c2, r3c3 = st.columns(3)
 
-            p_dep = r3c1.number_input("실입금액", value=0.0, step=0.01, format="%.2f")
-            p_pre = r3c2.number_input("선급금액", value=0.0, step=0.01, format="%.2f")
+            p_dep = r3c1.number_input(
+                "실입금액",
+                value=0.0,
+                step=0.01,
+                format="%.2f",
+                key=f"p_dep_{form_key}"
+            )
+
+            p_pre = r3c2.number_input(
+                "선급금액",
+                value=0.0,
+                step=0.01,
+                format="%.2f",
+                key=f"p_pre_{form_key}"
+            )
 
             cur_list = ["한화", "USD", "CNY"]
             p_cur = r3c3.selectbox(
                 "거래통화",
                 cur_list,
-                index=cur_list.index(auto_cur) if auto_cur in cur_list else 0
+                index=cur_list.index(auto_cur) if auto_cur in cur_list else 0,
+                key=f"p_cur_{form_key}"
             )
 
-            p_memo = st.text_input("비고 (송금 사유 등)")
+            p_memo = st.text_input(
+                "비고 (송금 사유 등)",
+                key=f"p_memo_{form_key}"
+            )
 
-            # 저장
             if st.form_submit_button("입금 내역 저장"):
 
                 if p_vn == "선택":
@@ -273,15 +299,13 @@ with tabs[0]:
                     })
 
                     if save_ok:
+                        st.session_state.pay_form_reset_key += 1
                         st.session_state.pay_notice = {
                             "type": "success",
                             "msg": "입금 내역 저장 완료"
                         }
                         st.rerun()
 
-    # -------------------------------
-    # 🔵 CSV 업로드
-    # -------------------------------
     with col_excel:
         st.subheader("2. CSV 일괄 업로드 (v136 지능형 매칭)")
 
@@ -341,6 +365,7 @@ with tabs[0]:
                     "msg": f"CSV 입금 내역 일괄 저장 완료: {len(up_list)}건"
                 }
                 st.rerun()
+
 
 
 # --- [Tab 1] 발주서 등록 및 관리 ---
