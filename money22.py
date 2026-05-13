@@ -339,11 +339,24 @@ with tabs[0]:
 
             ids = get_multiple_available_ids(len(df_up))
             up_list = []
+            skipped_count = 0
 
             for i, r in df_up.iterrows():
 
                 oid_v = to_str(r.get('발주번호'))
                 vn_v = to_str(r.get('거래처'))
+                date_v = to_str(r.get('입금일'))
+                type_v = to_str(r.get('유형'))
+                prod_v = to_str(r.get('상품명'))
+                memo_v = to_str(r.get('송금사유'))
+
+                dep_v = round(to_float(r.get('실입금액')), 2)
+                pre_v = round(to_float(r.get('선급금액')), 2)
+
+                # CSV 양식에 남아 있는 빈 줄은 저장하지 않음
+                if not any([oid_v, vn_v, date_v, type_v, prod_v, memo_v]) and dep_v == 0 and pre_v == 0:
+                    skipped_count += 1
+                    continue
 
                 match_o = o_data[o_data['발주번호'] == oid_v].iloc[0] if oid_v and not o_data[o_data['발주번호'] == oid_v].empty else None
 
@@ -353,28 +366,37 @@ with tabs[0]:
                     if not v_master.empty and vn_f and not v_master[v_master['거래처명'].str.lower() == vn_f.lower()].empty else None
 
                 up_list.append({
-                    "id": ids[i],
+                    "id": ids[len(up_list)],
                     "발주번호": oid_v or None,
-                    "입금일": smart_date(r.get('입금일')),
-                    "유형": match_o['유형'] if match_o is not None else (to_str(r.get('유형')) or "사입"),
+                    "입금일": smart_date(date_v),
+                    "유형": match_o['유형'] if match_o is not None else (type_v or "사입"),
                     "거래처명": vn_f,
-                    "상품명": match_o['상품명'] if match_o is not None else to_str(r.get('상품명')),
+                    "상품명": match_o['상품명'] if match_o is not None else prod_v,
                     "통화": match_o['통화'] if match_o is not None else "한화",
-                    "실입금액": round(to_float(r.get('실입금액')), 2),
-                    "선급금액": round(to_float(r.get('선급금액')), 2),
-                    "메모": to_str(r.get('송금사유')),
+                    "실입금액": dep_v,
+                    "선급금액": pre_v,
+                    "메모": memo_v,
                     "은행": vi['은행'] if vi is not None else "",
                     "계좌번호": vi['계좌번호'] if vi is not None else "",
                     "예금주": vi['예금주'] if vi is not None else ""
                 })
+
+            if not up_list:
+                st.session_state.pay_notice = {
+                    "type": "warning",
+                    "msg": "저장할 입금 내역이 없습니다. CSV의 빈 행은 제외되었습니다."
+                }
+                st.rerun()
 
             if upsert_supabase_data("payments", up_list):
                 st.session_state.pay_up_key += 1
                 st.session_state.pay_notice = {
                     "type": "success",
                     "msg": f"CSV 입금 내역 일괄 저장 완료: {len(up_list)}건"
+                           + (f" / 빈 행 제외: {skipped_count}건" if skipped_count else "")
                 }
                 st.rerun()
+
 
 
 # --- [Tab 1] 발주서 등록 및 관리 ---
