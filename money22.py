@@ -651,6 +651,11 @@ with tabs[1]:
 with tabs[2]:
     st.header("📋 상세 내역 및 통합 정산")
 
+    if 'detail_search_reset_key' not in st.session_state:
+        st.session_state.detail_search_reset_key = 0
+
+    search_reset_key = st.session_state.detail_search_reset_key
+
     p_all = get_supabase_data("payments")
     o_all = get_supabase_data("orders")
     ex_rates = get_supabase_data("exchange_rates")
@@ -674,9 +679,13 @@ with tabs[2]:
         if not o_all.empty:
             if '발주총액' not in o_all.columns:
                 o_all['발주총액'] = 0
-            o_all['발주총액'] = pd.to_numeric(o_all['발주총액'], errors='coerce').fillna(0)
+            if '마감여부' not in o_all.columns:
+                o_all['마감여부'] = 0
 
-            ref_dict = o_all.set_index('발주번호')[['거래처명', '상품명', '유형', '발주차수']].to_dict('index')
+            o_all['발주총액'] = pd.to_numeric(o_all['발주총액'], errors='coerce').fillna(0)
+            o_all['마감여부'] = pd.to_numeric(o_all['마감여부'], errors='coerce').fillna(0).astype(int)
+
+            ref_dict = o_all.set_index('발주번호')[['거래처명', '상품명', '유형', '발주차수', '마감여부']].to_dict('index')
 
             def fill_info(row):
                 oid = row.get('발주번호')
@@ -688,9 +697,15 @@ with tabs[2]:
                     if not to_str(row.get('유형')):
                         row['유형'] = ref_dict[oid]['유형']
                     row['발주차수'] = ref_dict[oid].get('발주차수', '-')
+                    row['발주마감여부'] = ref_dict[oid].get('마감여부', 0)
                 return row
 
             p_all = p_all.apply(fill_info, axis=1)
+
+        if '발주마감여부' not in p_all.columns:
+            p_all['발주마감여부'] = 0
+
+        p_all['발주마감여부'] = pd.to_numeric(p_all['발주마감여부'], errors='coerce').fillna(0).astype(int)
 
         def make_settle_type(row):
             base_type = to_str(row.get('유형'))
@@ -721,16 +736,51 @@ with tabs[2]:
             min_date = p_all['dt'].min().date()
             max_date = p_all['dt'].max().date()
 
-            start_date_input = f1.date_input("시작일", value=min_date)
-            end_date_input = f2.date_input("종료일", value=max_date)
+            start_date_input = f1.date_input(
+                "시작일",
+                value=min_date,
+                key="detail_start_date"
+            )
+
+            end_date_input = f2.date_input(
+                "종료일",
+                value=max_date,
+                key="detail_end_date"
+            )
 
             filter_options = ["전체 유형"] + CATEGORIES + ["제작(CNY)", "제작(USD)"]
             filter_options = list(dict.fromkeys(filter_options))
 
-            filter_cat = st.selectbox("유형 필터", filter_options)
-            search_vendor = st.text_input("🔍 업체 검색")
-            search_product = st.text_input("🔍 상품 검색")
-            search_order = st.text_input("🔍 발주차수 검색")
+            filter_cat = st.selectbox(
+                "유형 필터",
+                filter_options,
+                key=f"detail_filter_cat_{search_reset_key}"
+            )
+
+            show_closed_detail = st.checkbox(
+                "마감된 발주 포함",
+                value=False,
+                key=f"detail_show_closed_detail_{search_reset_key}"
+            )
+
+            search_vendor = st.text_input(
+                "🔍 업체 검색",
+                key=f"detail_search_vendor_{search_reset_key}"
+            )
+
+            search_product = st.text_input(
+                "🔍 상품 검색",
+                key=f"detail_search_product_{search_reset_key}"
+            )
+
+            search_order = st.text_input(
+                "🔍 발주차수 검색",
+                key=f"detail_search_order_{search_reset_key}"
+            )
+
+            if st.button("검색/유형 초기화", use_container_width=True, key=f"detail_search_reset_btn_{search_reset_key}"):
+                st.session_state.detail_search_reset_key += 1
+                st.rerun()
 
             if search_vendor or search_product or search_order:
                 st.success("검색 완료")
@@ -742,6 +792,17 @@ with tabs[2]:
             (p_all['dt'] >= start_date) &
             (p_all['dt'] <= end_date)
         ].copy()
+
+        if not show_closed_detail:
+            no_order_mask = (
+                filtered['발주번호'].isna() |
+                filtered['발주번호'].astype(str).str.strip().isin(["", "None", "nan", "NaN"])
+            )
+
+            filtered = filtered[
+                (filtered['발주마감여부'] != 1) |
+                no_order_mask
+            ]
 
         if filter_cat != "전체 유형":
             if filter_cat in ["제작(CNY)", "제작(USD)"]:
@@ -796,6 +857,9 @@ with tabs[2]:
             order_base = o_all.copy() if not o_all.empty else pd.DataFrame(columns=['정산유형', '유형', '발주총액'])
 
             if not order_base.empty:
+                if not show_closed_detail:
+                    order_base = order_base[order_base['마감여부'] != 1]
+
                 if filter_cat != "전체 유형":
                     if filter_cat in ["제작(CNY)", "제작(USD)"]:
                         order_base = order_base[order_base['정산유형'] == filter_cat]
@@ -843,13 +907,24 @@ with tabs[2]:
 
         st.subheader("🔍 발주별 정산 및 미수금 현황")
 
+        show_closed_settle = st.checkbox(
+            "마감된 발주 포함",
+            value=False,
+            key=f"settle_show_closed_orders_{search_reset_key}"
+        )
+
         if not o_all.empty:
+            settle_orders = o_all.copy()
+
+            if not show_closed_settle:
+                settle_orders = settle_orders[settle_orders['마감여부'] != 1]
+
             p_agg = calc_p_all.groupby('발주번호').agg({
                 '실입금액': 'sum',
                 '선급금액': 'sum'
             }).reset_index()
 
-            s_df = pd.merge(o_all, p_agg, on='발주번호', how='left').fillna(0)
+            s_df = pd.merge(settle_orders, p_agg, on='발주번호', how='left').fillna(0)
             s_df = s_df.sort_values(by=["마감여부", "발주일"], ascending=[True, False])
             s_df['미수잔액'] = s_df['발주총액'] - (s_df['실입금액'] + s_df['선급금액'])
             s_df['진행상태'] = s_df['마감여부'].apply(lambda x: "✅ 마감" if x == 1 else "⏳ 진행")
@@ -910,7 +985,10 @@ with tabs[2]:
 
             del st.session_state.detail_notice
 
-        show_deleted = st.checkbox("삭제된 내역 보기")
+        show_deleted = st.checkbox(
+            "삭제된 내역 보기",
+            key=f"detail_show_deleted_{search_reset_key}"
+        )
 
         filtered['상태'] = filtered['삭제'].apply(lambda x: '삭제됨' if x else '')
 
@@ -930,9 +1008,11 @@ with tabs[2]:
         if not show_deleted:
             display_p = display_p[display_p['삭제'] != True].reset_index(drop=True)
 
+        editor_key = f"payment_editor_v10_{search_reset_key}"
+
         edited_p = st.data_editor(
             display_p,
-            key="payment_editor_v10",
+            key=editor_key,
             hide_index=True,
             use_container_width=True,
             column_config={
@@ -949,7 +1029,7 @@ with tabs[2]:
         b1, b2, b3 = st.columns(3)
 
         if b1.button("💾 상세 수정 저장", use_container_width=True):
-            state = st.session_state.get("payment_editor_v10", {})
+            state = st.session_state.get(editor_key, {})
             edited_rows = state.get("edited_rows", {})
 
             if edited_rows:
@@ -970,6 +1050,7 @@ with tabs[2]:
                         if up_data:
                             supabase.table("payments").update(up_data).eq("id", tid).execute()
 
+                    st.session_state.detail_search_reset_key += 1
                     st.session_state.detail_notice = {
                         "type": "success",
                         "msg": "수정 완료"
@@ -991,6 +1072,7 @@ with tabs[2]:
                     for tid in delete_ids:
                         supabase.table("payments").update({"삭제": True}).eq("id", int(tid)).execute()
 
+                    st.session_state.detail_search_reset_key += 1
                     st.session_state.detail_notice = {
                         "type": "success",
                         "msg": "삭제 완료"
@@ -1010,6 +1092,7 @@ with tabs[2]:
                     for tid in restore_ids:
                         supabase.table("payments").update({"삭제": False}).eq("id", int(tid)).execute()
 
+                    st.session_state.detail_search_reset_key += 1
                     st.session_state.detail_notice = {
                         "type": "success",
                         "msg": "복구 완료"
