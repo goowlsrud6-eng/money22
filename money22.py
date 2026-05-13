@@ -381,6 +381,9 @@ with tabs[0]:
 with tabs[1]:
     st.header("📦 발주서 등록 및 관리")
 
+    if 'order_search_reset_key' not in st.session_state:
+        st.session_state.order_search_reset_key = 0
+
     if 'order_notice' in st.session_state:
         notice_type = st.session_state.order_notice.get("type", "success")
         notice_msg = st.session_state.order_notice.get("msg", "")
@@ -423,6 +426,7 @@ with tabs[1]:
                     fail_msgs.append(f"[{f.name}] {msg}")
 
             st.session_state.order_up_key += 1
+            st.session_state.order_search_reset_key += 1
 
             if fail_msgs:
                 st.session_state.order_notice = {
@@ -474,6 +478,7 @@ with tabs[1]:
                     }
 
                     if upsert_supabase_data("orders", new_order):
+                        st.session_state.order_search_reset_key += 1
                         st.session_state.order_notice = {
                             "type": "success",
                             "msg": f"발주서 [{m_oid}] 등록 완료"
@@ -491,7 +496,8 @@ with tabs[1]:
 
             order_search = st.text_input(
                 "🔍 발주 검색",
-                placeholder="발주번호, 차수, 거래처명, 상품명, 유형, 통화 검색"
+                placeholder="발주번호, 차수, 거래처명, 상품명, 유형, 통화 검색",
+                key=f"order_search_{st.session_state.order_search_reset_key}"
             )
 
             disp_o = o_data.copy()
@@ -568,6 +574,7 @@ with tabs[1]:
                                 .eq("발주번호", str(r['발주번호'])) \
                                 .execute()
 
+                        st.session_state.order_search_reset_key += 1
                         st.session_state.order_notice = {
                             "type": "success",
                             "msg": f"발주 목록 변경사항 저장 완료: {len(clean_data)}건"
@@ -587,6 +594,7 @@ with tabs[1]:
                                 .eq("발주번호", oid) \
                                 .execute()
 
+                        st.session_state.order_search_reset_key += 1
                         st.session_state.order_notice = {
                             "type": "success",
                             "msg": f"선택한 발주 삭제 완료: {len(del_list)}건"
@@ -607,6 +615,7 @@ with tabs[1]:
                                     .eq("발주번호", oid) \
                                     .execute()
 
+                            st.session_state.order_search_reset_key += 1
                             st.session_state.order_notice = {
                                 "type": "success",
                                 "msg": f"선택한 발주 복구 완료: {len(restore_list)}건"
@@ -615,6 +624,7 @@ with tabs[1]:
 
         else:
             st.info("내역 없음")
+
 # --- [Tab 2] 상세 내역 및 통합 정산 ---
 with tabs[2]:
     st.header("📋 상세 내역 및 통합 정산")
