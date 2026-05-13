@@ -695,14 +695,12 @@ with tabs[2]:
 
         with f_left:
             f1, f2 = st.columns(2)
-            f3, f4 = st.columns(2)
 
-            years = sorted(p_all['dt'].dt.year.unique())
+            min_date = p_all['dt'].min().date()
+            max_date = p_all['dt'].max().date()
 
-            start_y = f1.selectbox("시작 연도", years, index=0)
-            end_y = f2.selectbox("종료 연도", years, index=len(years) - 1)
-            start_m = f3.selectbox("시작 월", list(range(1, 13)), index=0)
-            end_m = f4.selectbox("종료 월", list(range(1, 13)), index=11)
+            start_date_input = f1.date_input("시작일", value=min_date)
+            end_date_input = f2.date_input("종료일", value=max_date)
 
             filter_options = ["전체 유형"] + CATEGORIES + ["제작(CNY)", "제작(USD)"]
             filter_options = list(dict.fromkeys(filter_options))
@@ -715,8 +713,8 @@ with tabs[2]:
             if search_vendor or search_product or search_order:
                 st.success("검색 완료")
 
-        start_date = pd.to_datetime(f"{start_y}-{start_m:02d}-01")
-        end_date = pd.to_datetime(f"{end_y}-{end_m:02d}-01") + pd.offsets.MonthEnd(1)
+        start_date = pd.to_datetime(start_date_input)
+        end_date = pd.to_datetime(end_date_input) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
 
         filtered = p_all[
             (p_all['dt'] >= start_date) &
@@ -811,12 +809,12 @@ with tabs[2]:
             })[['유형', '총발주액', '총지급액', '선급금액', '한화환산액']]
 
             summary_height = min(420, 38 + len(summary) * 35)
+
             st.dataframe(
                 summary.style.format('{:,.2f}', subset=['총발주액', '총지급액', '선급금액', '한화환산액']),
                 hide_index=True,
                 use_container_width=True,
                 height=summary_height
-                
             )
 
         st.divider()
