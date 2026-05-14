@@ -731,20 +731,55 @@ with tabs[2]:
         f_left, f_right = st.columns([1.2, 1])
 
         with f_left:
-            f1, f2 = st.columns(2)
-
             min_date = p_all['dt'].min().date()
             max_date = p_all['dt'].max().date()
 
+            today = datetime.now().date()
+            month_start = today.replace(day=1)
+            last_month_end = month_start - timedelta(days=1)
+            last_month_start = last_month_end.replace(day=1)
+
+            if "detail_start_date" not in st.session_state:
+                st.session_state.detail_start_date = min_date
+            if "detail_end_date" not in st.session_state:
+                st.session_state.detail_end_date = max_date
+
+            quick_cols = st.columns(5)
+
+            if quick_cols[0].button("오늘", use_container_width=True):
+                st.session_state.detail_start_date = today
+                st.session_state.detail_end_date = today
+                st.rerun()
+
+            if quick_cols[1].button("이번달", use_container_width=True):
+                st.session_state.detail_start_date = month_start
+                st.session_state.detail_end_date = today
+                st.rerun()
+
+            if quick_cols[2].button("지난달", use_container_width=True):
+                st.session_state.detail_start_date = last_month_start
+                st.session_state.detail_end_date = last_month_end
+                st.rerun()
+
+            if quick_cols[3].button("전체", use_container_width=True):
+                st.session_state.detail_start_date = min_date
+                st.session_state.detail_end_date = max_date
+                st.rerun()
+
+            if quick_cols[4].button("최근 7일", use_container_width=True):
+                st.session_state.detail_start_date = today - timedelta(days=6)
+                st.session_state.detail_end_date = today
+                st.rerun()
+
+            f1, f2 = st.columns(2)
+
             start_date_input = f1.date_input(
                 "시작일",
-                value=min_date,
                 key="detail_start_date"
             )
 
             end_date_input = f2.date_input(
                 "종료일",
-                value=max_date,
                 key="detail_end_date"
             )
 
