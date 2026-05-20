@@ -1720,7 +1720,7 @@ with tabs[5]:
             pay_cols[2].caption(f"환산 {usd_real_conv:,.2f} 원")
 
             pay_cols[3].metric("총 지급 환산액", f"{total_real_conv:,.2f} 원")
-            st.caption("총 지급액은 실입금액 기준입니다. 선급금은 더하지 않습니다.")
+            st.caption("총 지급액은 실입금액 기준입니다. 선급금 차감이 있었다면 차감 후 실제 지급된 금액을 기준으로 표시합니다.")
 
             st.divider()
 
