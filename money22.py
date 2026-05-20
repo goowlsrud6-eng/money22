@@ -1535,15 +1535,36 @@ with tabs[5]:
 
                 curr_col = currency.lower()
 
-                if not ex_rates.empty and curr_col in ex_rates.columns:
-                    rate_df = ex_rates[ex_rates['ym'] == ym].copy()
+                def find_month_avg(target_ym):
+                    if ex_rates.empty or curr_col not in ex_rates.columns:
+                        return None
 
-                    if not rate_df.empty:
-                        rate_df[curr_col] = pd.to_numeric(rate_df[curr_col], errors='coerce')
-                        avg_rate = rate_df[curr_col].dropna().mean()
+                    rate_df = ex_rates[ex_rates['ym'] == target_ym].copy()
 
-                        if pd.notna(avg_rate) and avg_rate > 0:
-                            return float(avg_rate), "환율분석 월평균"
+                    if rate_df.empty:
+                        return None
+
+                    rate_df[curr_col] = pd.to_numeric(rate_df[curr_col], errors='coerce')
+                    avg_rate = rate_df[curr_col].dropna().mean()
+
+                    if pd.notna(avg_rate) and avg_rate > 0:
+                        return float(avg_rate)
+
+                    return None
+
+                current_rate = find_month_avg(ym)
+
+                if current_rate is not None:
+                    return current_rate, "환율분석 월평균"
+
+                prev_ym = (
+                    pd.to_datetime(f"{ym}-01") - pd.DateOffset(months=1)
+                ).strftime('%Y-%m')
+
+                prev_rate = find_month_avg(prev_ym)
+
+                if prev_rate is not None:
+                    return prev_rate, f"전월 평균환율({prev_ym})"
 
                 fallback_rates = {
                     "USD": 1350.0,
@@ -1720,7 +1741,7 @@ with tabs[5]:
             pay_cols[2].caption(f"환산 {usd_real_conv:,.2f} 원")
 
             pay_cols[3].metric("총 지급 환산액", f"{total_real_conv:,.2f} 원")
-            st.caption("총 지급액은 실입금액 기준입니다. 선급금 차감이 있었다면 차감 후 실제 지급된 금액을 기준으로 표시합니다.")
+            st.caption("실제로 입금/지급된 금액입니다. 선급금 차감이 있었다면 차감 후 실제 지급된 금액을 기준으로 표시합니다.")
 
             st.divider()
 
@@ -1745,7 +1766,7 @@ with tabs[5]:
             prepay_paid_cols[2].caption(f"환산 {usd_prepay_paid_conv:,.2f} 원")
 
             prepay_paid_cols[3].metric("총 선급금 지급 환산액", f"{total_prepay_paid_conv:,.2f} 원")
-            st.caption("선급금 지급액은 선급금액 중 양수 금액만 합산합니다.")
+            st.caption("선급금으로 지급한 금액입니다. 선급금 차감 입력분은 제외하고, 양수 선급금만 합산합니다.")
 
             st.divider()
 
@@ -1770,14 +1791,16 @@ with tabs[5]:
             prepay_balance_cols[2].caption(f"환산 {usd_prepay_balance_conv:,.2f} 원")
 
             prepay_balance_cols[3].metric("총 선급금 잔액 환산액", f"{total_prepay_balance_conv:,.2f} 원")
-            st.caption("선급금 잔액은 선급금액 전체 합계입니다. 양수는 증가, 음수는 차감으로 반영합니다.")
+            st.caption("아직 정산에 남아있는 선급금입니다. 지급은 양수, 차감은 음수로 반영합니다.")
 
             with st.expander("계산 기준 보기", expanded=False):
-                st.write("총 지급액 = 실입금액 합계")
-                st.write("총 지급 환산액 = KRW 실입금액 + CNY 실입금 환산액 + USD 실입금 환산액")
-                st.write("선급금 지급액 = 선급금액 중 양수 금액만 합계")
-                st.write("선급금 잔액 = 선급금액 전체 합계. 양수는 증가, 음수는 차감입니다.")
-                st.write("외화 환산은 입금월의 환율분석 월평균 환율을 사용합니다. 월평균 환율이 없으면 기본환율을 사용합니다.")
+                st.write("총 지급액은 실제로 입금/지급된 실입금액의 합계입니다.")
+                st.write("총 지급 환산액은 KRW 실입금액, CNY 실입금 환산액, USD 실입금 환산액을 더한 금액입니다.")
+                st.write("선급금 지급액은 새로 지급한 선급금입니다. 선급금액 중 양수 금액만 합산합니다.")
+                st.write("선급금 지급 환산액은 KRW 선급금 지급액, CNY 선급금 지급 환산액, USD 선급금 지급 환산액을 더한 금액입니다.")
+                st.write("선급금 잔액은 선급금액 전체 합계입니다. 양수는 잔액 증가, 음수는 사용 또는 차감으로 반영합니다.")
+                st.write("총 선급금 잔액 환산액은 KRW 선급금 잔액, CNY 선급금 잔액 환산액, USD 선급금 잔액 환산액을 더한 금액입니다.")
+                st.write("외화 환산은 입금월의 환율분석 월평균 환율을 사용합니다. 월평균 환율이 없으면 전월 평균환율을 사용하고, 전월 평균도 없으면 기본환율을 사용합니다.")
                 st.write("삭제 처리된 입금 내역은 요약에서 제외됩니다.")
 
             st.divider()
