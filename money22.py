@@ -185,14 +185,13 @@ with tabs[0]:
     col_input, col_excel = st.columns([1.5, 1])
 
     # -------------------------------
-    # 🔵 수기 입력 (자동 연동 핵심)
+    # 🔵 수기 입력
     # -------------------------------
     with col_input:
         st.subheader("1. 수기 직접 입력")
 
         form_key = st.session_state.pay_form_reset_key
 
-        # 발주번호는 form 밖에 있어야 선택 즉시 자동 연동값이 갱신됨
         p_oid = st.selectbox(
             "발주번호 연동",
             ["없음"] + (list(o_active['발주번호']) if not o_active.empty else []),
@@ -243,32 +242,61 @@ with tabs[0]:
                 key=f"p_pr_{auto_key}"
             )
 
-            r3c1, r3c2, r3c3 = st.columns(3)
+            cur_list = ["한화", "USD", "CNY"]
 
-            p_dep = r3c1.number_input(
-                "실입금액",
+            c1, c2 = st.columns(2)
+
+            p_order_cur = c1.selectbox(
+                "발주통화",
+                cur_list,
+                index=cur_list.index(auto_cur) if auto_cur in cur_list else 0,
+                key=f"p_order_cur_{auto_key}"
+            )
+
+            p_real_cur = c2.selectbox(
+                "실제지급통화",
+                cur_list,
+                index=cur_list.index(p_order_cur) if p_order_cur in cur_list else 0,
+                key=f"p_real_cur_{auto_key}"
+            )
+
+            r1c1, r1c2 = st.columns(2)
+
+            p_dep = r1c1.number_input(
+                "실입금액 (발주통화 기준)",
                 value=0.0,
                 step=0.01,
                 format="%.2f",
                 key=f"p_dep_{auto_key}"
             )
 
-            p_pre = r3c2.number_input(
-                "선급금액",
+            p_pre = r1c2.number_input(
+                "선급금액 (발주통화 기준)",
                 value=0.0,
                 step=0.01,
                 format="%.2f",
                 key=f"p_pre_{auto_key}"
             )
 
-            cur_list = ["한화", "USD", "CNY"]
+            r2c1, r2c2 = st.columns(2)
 
-            p_cur = r3c3.selectbox(
-                "거래통화",
-                cur_list,
-                index=cur_list.index(auto_cur) if auto_cur in cur_list else 0,
-                key=f"p_cur_{auto_key}"
+            p_real_amt = r2c1.number_input(
+                "실제지급액",
+                value=0.0,
+                step=0.01,
+                format="%.2f",
+                key=f"p_real_amt_{auto_key}"
             )
+
+            p_pay_rate = r2c2.number_input(
+                "지급환율",
+                value=1.0 if p_order_cur == p_real_cur else 0.0,
+                step=0.0001,
+                format="%.6f",
+                key=f"p_pay_rate_{auto_key}"
+            )
+
+            st.caption("실입금액과 선급금액은 발주통화 기준입니다. 실제지급액은 실제 돈이 나간 통화 기준입니다.")
 
             p_memo = st.text_input(
                 "비고 (송금 사유 등)",
@@ -289,6 +317,24 @@ with tabs[0]:
                 else:
                     vi = v_master[v_master['거래처명'] == p_vn].iloc[0]
 
+                    dep_amount = round(float(p_dep), 2)
+                    pre_amount = round(float(p_pre), 2)
+                    real_amount = round(float(p_real_amt), 2)
+                    pay_rate = round(float(p_pay_rate), 6)
+
+                    base_amount = dep_amount if dep_amount != 0 else pre_amount
+
+                    if p_order_cur == p_real_cur:
+                        if real_amount == 0 and base_amount != 0:
+                            real_amount = base_amount
+                        if pay_rate == 0:
+                            pay_rate = 1.0
+                    else:
+                        if real_amount == 0 and base_amount != 0 and pay_rate != 0:
+                            real_amount = round(base_amount * pay_rate, 2)
+                        elif pay_rate == 0 and base_amount != 0 and real_amount != 0:
+                            pay_rate = round(real_amount / base_amount, 6)
+
                     save_ok = upsert_supabase_data("payments", {
                         "id": get_multiple_available_ids(1)[0],
                         "발주번호": p_oid if p_oid != "없음" else None,
@@ -296,9 +342,20 @@ with tabs[0]:
                         "유형": p_ct,
                         "거래처명": p_vn,
                         "상품명": p_pr,
-                        "통화": p_cur,
-                        "실입금액": round(float(p_dep), 2),
-                        "선급금액": round(float(p_pre), 2),
+
+                        # 기존 호환용
+                        "통화": p_order_cur,
+
+                        # 발주/정산 기준
+                        "발주통화": p_order_cur,
+                        "실입금액": dep_amount,
+                        "선급금액": pre_amount,
+
+                        # 실제 지급 기준
+                        "실제지급통화": p_real_cur,
+                        "실제지급액": real_amount,
+                        "지급환율": pay_rate,
+
                         "메모": p_memo,
                         "은행": vi['은행'],
                         "계좌번호": vi['계좌번호'],
@@ -321,8 +378,32 @@ with tabs[0]:
 
         csv_template = pd.DataFrame(columns=[
             "발주번호", "거래처", "유형", "상품명",
-            "입금일", "실입금액", "선급금액", "송금사유"
+            "입금일",
+            "발주통화", "실입금액", "선급금액",
+            "실제지급통화", "실제지급액", "지급환율",
+            "송금사유"
         ])
+
+        with st.expander("CSV 작성 예시 보기", expanded=False):
+            st.markdown("""
+            **기본 입력 방식**
+
+            발주번호가 있으면 거래처, 유형, 상품명, 발주통화는 자동 매칭됩니다.
+
+            | 발주번호 | 입금일 | 실입금액 | 선급금액 | 송금사유 |
+            |---|---|---:|---:|---|
+            | 20260417-1 | 2026-04-17 | 500000 | 0 | 잔금 입금 |
+
+            **CNY 발주를 USD로 지급한 경우**
+
+            | 발주번호 | 입금일 | 실입금액 | 선급금액 | 실제지급통화 | 실제지급액 | 지급환율 | 송금사유 |
+            |---|---|---:|---:|---|---:|---:|---|
+            | 20260417-2 | 2026-04-17 | 12600 | 12600 | USD | 1824.48 | 0.1448 | 선급금 30% |
+
+            - `실입금액`, `선급금액`은 발주통화 기준입니다.
+            - `실제지급액`은 실제지급통화 기준입니다.
+            - 발주통화와 실제지급통화가 같으면 `실제지급통화`, `실제지급액`, `지급환율`은 생략해도 됩니다.
+            """)
 
         st.download_button(
             "양식 다운로드",
@@ -330,7 +411,11 @@ with tabs[0]:
             "payment_template.csv"
         )
 
-        up_pay = st.file_uploader("CSV 선택", type=['csv'], key=f"pay_up_{st.session_state.pay_up_key}")
+        up_pay = st.file_uploader(
+            "CSV 선택",
+            type=['csv'],
+            key=f"pay_up_{st.session_state.pay_up_key}"
+        )
 
         if up_pay and st.button("파일 일괄 저장 실행"):
 
@@ -353,17 +438,44 @@ with tabs[0]:
                 dep_v = round(to_float(r.get('실입금액')), 2)
                 pre_v = round(to_float(r.get('선급금액')), 2)
 
-                # CSV 양식에 남아 있는 빈 줄은 저장하지 않음
-                if not any([oid_v, vn_v, date_v, type_v, prod_v, memo_v]) and dep_v == 0 and pre_v == 0:
+                order_cur_input = to_str(r.get('발주통화')) or to_str(r.get('통화'))
+                real_cur_input = to_str(r.get('실제지급통화')) or to_str(r.get('실입금통화'))
+
+                real_amt_v = round(to_float(r.get('실제지급액')), 2)
+                pay_rate_v = round(to_float(r.get('지급환율')), 6)
+
+                if not any([
+                    oid_v, vn_v, date_v, type_v, prod_v, memo_v,
+                    order_cur_input, real_cur_input
+                ]) and dep_v == 0 and pre_v == 0 and real_amt_v == 0 and pay_rate_v == 0:
                     skipped_count += 1
                     continue
 
-                match_o = o_data[o_data['발주번호'] == oid_v].iloc[0] if oid_v and not o_data[o_data['발주번호'] == oid_v].empty else None
+                match_o = (
+                    o_data[o_data['발주번호'] == oid_v].iloc[0]
+                    if oid_v and not o_data[o_data['발주번호'] == oid_v].empty
+                    else None
+                )
 
                 vn_f = match_o['거래처명'] if match_o is not None else vn_v
+                order_cur_v = order_cur_input or (match_o['통화'] if match_o is not None else "한화")
+                real_cur_v = real_cur_input or order_cur_v
 
                 vi = v_master[v_master['거래처명'].str.lower() == vn_f.lower()].iloc[0] \
                     if not v_master.empty and vn_f and not v_master[v_master['거래처명'].str.lower() == vn_f.lower()].empty else None
+
+                base_amount = dep_v if dep_v != 0 else pre_v
+
+                if order_cur_v == real_cur_v:
+                    if real_amt_v == 0 and base_amount != 0:
+                        real_amt_v = base_amount
+                    if pay_rate_v == 0:
+                        pay_rate_v = 1.0
+                else:
+                    if real_amt_v == 0 and base_amount != 0 and pay_rate_v != 0:
+                        real_amt_v = round(base_amount * pay_rate_v, 2)
+                    elif pay_rate_v == 0 and base_amount != 0 and real_amt_v != 0:
+                        pay_rate_v = round(real_amt_v / base_amount, 6)
 
                 up_list.append({
                     "id": ids[len(up_list)],
@@ -372,9 +484,20 @@ with tabs[0]:
                     "유형": match_o['유형'] if match_o is not None else (type_v or "사입"),
                     "거래처명": vn_f,
                     "상품명": match_o['상품명'] if match_o is not None else prod_v,
-                    "통화": match_o['통화'] if match_o is not None else "한화",
+
+                    # 기존 호환용
+                    "통화": order_cur_v,
+
+                    # 발주/정산 기준
+                    "발주통화": order_cur_v,
                     "실입금액": dep_v,
                     "선급금액": pre_v,
+
+                    # 실제 지급 기준
+                    "실제지급통화": real_cur_v,
+                    "실제지급액": real_amt_v,
+                    "지급환율": pay_rate_v,
+
                     "메모": memo_v,
                     "은행": vi['은행'] if vi is not None else "",
                     "계좌번호": vi['계좌번호'] if vi is not None else "",
