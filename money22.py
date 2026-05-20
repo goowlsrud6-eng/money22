@@ -385,25 +385,58 @@ with tabs[0]:
         ])
 
         with st.expander("CSV 작성 예시 보기", expanded=False):
-            st.markdown("""
-            **기본 입력 방식**
+            st.write("발주번호가 있으면 거래처, 유형, 상품명, 발주통화는 자동 매칭됩니다.")
 
-            발주번호가 있으면 거래처, 유형, 상품명, 발주통화는 자동 매칭됩니다.
+            st.write("기본 입력 방식")
+            basic_example = pd.DataFrame([
+                {
+                    "발주번호": "20260417-1",
+                    "입금일": "2026-04-17",
+                    "실입금액": 500000,
+                    "선급금액": 0,
+                    "송금사유": "잔금 입금"
+                }
+            ])
 
-            | 발주번호 | 입금일 | 실입금액 | 선급금액 | 송금사유 |
-            |---|---|---:|---:|---|
-            | 20260417-1 | 2026-04-17 | 500000 | 0 | 잔금 입금 |
+            st.dataframe(
+                basic_example,
+                hide_index=True,
+                use_container_width=True,
+                column_config={
+                    "실입금액": st.column_config.NumberColumn("실입금액", format="%,.2f"),
+                    "선급금액": st.column_config.NumberColumn("선급금액", format="%,.2f")
+                }
+            )
 
-            **CNY 발주를 USD로 지급한 경우**
+            st.write("CNY 발주를 USD로 지급한 경우")
+            usd_example = pd.DataFrame([
+                {
+                    "발주번호": "20260417-2",
+                    "입금일": "2026-04-17",
+                    "실입금액": 12600,
+                    "선급금액": 12600,
+                    "실제지급통화": "USD",
+                    "실제지급액": 1824.48,
+                    "지급환율": 0.1448,
+                    "송금사유": "선급금 30%"
+                }
+            ])
 
-            | 발주번호 | 입금일 | 실입금액 | 선급금액 | 실제지급통화 | 실제지급액 | 지급환율 | 송금사유 |
-            |---|---|---:|---:|---|---:|---:|---|
-            | 20260417-2 | 2026-04-17 | 12600 | 12600 | USD | 1824.48 | 0.1448 | 선급금 30% |
+            st.dataframe(
+                usd_example,
+                hide_index=True,
+                use_container_width=True,
+                column_config={
+                    "실입금액": st.column_config.NumberColumn("실입금액", format="%,.2f"),
+                    "선급금액": st.column_config.NumberColumn("선급금액", format="%,.2f"),
+                    "실제지급액": st.column_config.NumberColumn("실제지급액", format="%,.2f"),
+                    "지급환율": st.column_config.NumberColumn("지급환율", format="%.6f")
+                }
+            )
 
-            - `실입금액`, `선급금액`은 발주통화 기준입니다.
-            - `실제지급액`은 실제지급통화 기준입니다.
-            - 발주통화와 실제지급통화가 같으면 `실제지급통화`, `실제지급액`, `지급환율`은 생략해도 됩니다.
-            """)
+            st.caption("실입금액과 선급금액은 발주통화 기준입니다.")
+            st.caption("실제지급액은 실제지급통화 기준입니다.")
+            st.caption("발주통화와 실제지급통화가 같으면 실제지급통화, 실제지급액, 지급환율은 생략해도 됩니다.")
 
         st.download_button(
             "양식 다운로드",
