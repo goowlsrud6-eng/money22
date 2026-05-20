@@ -374,7 +374,7 @@ with tabs[0]:
     # 🔵 CSV 업로드
     # -------------------------------
     with col_excel:
-        st.subheader("2. CSV 일괄 업로드 (v136 지능형 매칭)")
+        st.subheader("2. CSV 일괄 업로드")
 
         csv_template = pd.DataFrame(columns=[
             "발주번호", "거래처", "유형", "상품명",
