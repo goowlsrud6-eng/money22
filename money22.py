@@ -1049,14 +1049,14 @@ with tabs[2]:
                 st.session_state.detail_end_date = today
                 st.rerun()
 
-            f1, f2 = st.columns(2)
+            d1, d2 = st.columns(2)
 
-            start_date_input = f1.date_input(
+            start_date_input = d1.date_input(
                 "시작일",
                 key="detail_start_date"
             )
 
-            end_date_input = f2.date_input(
+            end_date_input = d2.date_input(
                 "종료일",
                 key="detail_end_date"
             )
@@ -1064,36 +1064,46 @@ with tabs[2]:
             filter_options = CATEGORIES + ["제작(CNY)", "제작(USD)", "물품대(CNY)", "물품대(USD)"]
             filter_options = list(dict.fromkeys(filter_options))
 
-            filter_cats = st.multiselect(
+            fcat_col, closed_col = st.columns([2, 1])
+
+            filter_cats = fcat_col.multiselect(
                 "유형 필터",
                 filter_options,
                 key=f"detail_filter_cat_{search_reset_key}"
             )
 
-            st.caption("유형을 선택하지 않으면 전체 유형이 표시됩니다.")
-
-            show_closed_detail = st.checkbox(
-                "마감된 발주 포함",
+            show_closed_detail = closed_col.checkbox(
+                "마감 포함",
                 value=False,
                 key=f"detail_show_closed_detail_{search_reset_key}"
             )
 
-            search_vendor = st.text_input(
+            s1, s2 = st.columns(2)
+
+            search_vendor = s1.text_input(
                 "🔍 업체 검색",
                 key=f"detail_search_vendor_{search_reset_key}"
             )
 
-            search_product = st.text_input(
+            search_product = s2.text_input(
                 "🔍 상품 검색",
                 key=f"detail_search_product_{search_reset_key}"
             )
 
-            search_order = st.text_input(
+            s3, s4 = st.columns([2, 1])
+
+            search_order = s3.text_input(
                 "🔍 발주차수 검색",
                 key=f"detail_search_order_{search_reset_key}"
             )
 
-            if st.button("검색/유형 초기화", use_container_width=True, key=f"detail_search_reset_btn_{search_reset_key}"):
+            reset_clicked = s4.button(
+                "초기화",
+                use_container_width=True,
+                key=f"detail_search_reset_btn_{search_reset_key}"
+            )
+
+            if reset_clicked:
                 st.session_state.detail_search_reset_key += 1
                 st.rerun()
 
@@ -1448,7 +1458,6 @@ with tabs[2]:
 
     else:
         st.info("입금 내역 없음")
-
         
 # --- [Tab 3] 거래처 관리 ---
 with tabs[3]:
