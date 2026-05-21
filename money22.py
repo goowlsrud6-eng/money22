@@ -1006,8 +1006,8 @@ with tabs[2]:
         p_all['한화환산액'] = p_all.apply(get_actual_conv, axis=1)
 
         st.subheader("🔎 필터")
-        f_left, f_right = st.columns([1.2, 1])
-
+        f_left, f_blank, f_right = st.columns([0.55, 0.65, 1.0], gap="large")
+        
         with f_left:
             min_date = p_all['dt'].min().date()
             max_date = p_all['dt'].max().date()
