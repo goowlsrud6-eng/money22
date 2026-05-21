@@ -2098,12 +2098,6 @@ with tabs[5]:
 
             st.subheader("📌 전체 요약")
 
-            st.info(
-                "총 지급액은 실제지급액 기준입니다. 실제 돈이 나간 통화로 합산합니다.\n\n"
-                "선급금 지급액은 선급금액이 0보다 큰 입금건의 실제지급액 기준입니다.\n\n"
-                "선급금 잔액은 발주통화 기준 선급금액의 합계입니다. 잔금 정산에서 차감한 선급금은 음수로 반영됩니다."
-            )
-
             def sum_actual(df, currency):
                 return df[df['실제지급통화'] == currency]['실제지급액'].sum()
 
@@ -2127,6 +2121,8 @@ with tabs[5]:
             total_all_conv = filtered['한화환산액'].sum()
 
             st.markdown("#### 총 지급액")
+            st.caption("실제지급액 기준입니다. 실제 돈이 나간 통화로 합산합니다.")
+
             t1, t2, t3, t4 = st.columns(4)
 
             t1.metric("KRW 총 지급액", f"{total_krw:,.2f} 원")
@@ -2143,6 +2139,8 @@ with tabs[5]:
             prepay_all_conv = prepay_paid['한화환산액'].sum()
 
             st.markdown("#### 선급금 지급액")
+            st.caption("선급금액이 0보다 큰 입금건의 실제지급액 기준입니다.")
+
             p1, p2, p3, p4 = st.columns(4)
 
             p1.metric("KRW 선급금 지급액", f"{prepay_krw:,.2f} 원")
@@ -2159,6 +2157,8 @@ with tabs[5]:
             balance_all_conv = filtered['선급금잔액환산액'].sum()
 
             st.markdown("#### 선급금 잔액")
+            st.caption("발주통화 기준 선급금액의 합계입니다. 잔금 정산에서 차감한 선급금은 음수로 반영됩니다.")
+
             b1, b2, b3, b4 = st.columns(4)
 
             b1.metric("KRW 선급금 잔액", f"{balance_krw:,.2f} 원")
@@ -2236,28 +2236,62 @@ with tabs[5]:
 
             st.subheader("📊 유형별 지급 요약")
 
-            type_summary = filtered.groupby(['정산유형', '실제지급통화'], dropna=False).agg({
+            settle_type_summary = filtered.groupby(['정산유형', '발주통화'], dropna=False).agg({
+                '실입금액': 'sum',
+                '선급금액': 'sum'
+            }).reset_index()
+
+            settle_type_summary = settle_type_summary.rename(columns={
+                '정산유형': '유형'
+            })
+
+            settle_type_summary['선급금잔액'] = settle_type_summary['선급금액']
+
+            actual_type_summary = filtered.groupby(['정산유형', '실제지급통화'], dropna=False).agg({
                 '실제지급액': 'sum',
                 '한화환산액': 'sum'
             }).reset_index()
 
-            type_summary = type_summary.rename(columns={
-                '정산유형': '유형',
-                '실제지급통화': '지급통화'
-            }).sort_values(['유형', '지급통화'])
+            actual_type_summary = actual_type_summary.rename(columns={
+                '정산유형': '유형'
+            })
+
+            type_summary = pd.merge(
+                settle_type_summary,
+                actual_type_summary,
+                on='유형',
+                how='outer'
+            ).fillna(0)
+
+            type_summary = type_summary[[
+                '유형',
+                '발주통화',
+                '실입금액',
+                '선급금액',
+                '선급금잔액',
+                '실제지급통화',
+                '실제지급액',
+                '한화환산액'
+            ]].sort_values(['유형', '발주통화', '실제지급통화']).reset_index(drop=True)
 
             if not type_summary.empty:
                 st.dataframe(
                     type_summary.style.format(
                         '{:,.2f}',
-                        subset=['실제지급액', '한화환산액']
+                        subset=[
+                            '실입금액',
+                            '선급금액',
+                            '선급금잔액',
+                            '실제지급액',
+                            '한화환산액'
+                        ]
                     ),
                     hide_index=True,
                     use_container_width=True,
-                    height=min(520, 45 + len(type_summary) * 35)
+                    height=min(620, 45 + len(type_summary) * 35)
                 )
 
-                st.caption("유형별 지급 요약은 실제 지급 기준입니다. 유형은 발주통화 기준으로 구분하고, 금액은 실제지급통화 기준으로 표시합니다.")
+                st.caption("유형별 지급 요약은 정산 기준과 실제 지급 기준을 함께 보여줍니다. 실입금액, 선급금액, 선급금잔액은 발주통화 기준이고 실제지급액은 실제지급통화 기준입니다.")
             else:
                 st.info("유형별 요약 내역이 없습니다.")
 
@@ -2266,51 +2300,71 @@ with tabs[5]:
             st.subheader("🏢 거래처별 지급 TOP")
 
             if not filtered.empty:
-                vendor_amount = filtered.pivot_table(
-                    index='거래처명',
-                    columns='실제지급통화',
-                    values='실제지급액',
-                    aggfunc='sum',
-                    fill_value=0
-                ).reset_index()
+                settle_vendor_summary = filtered.groupby(['거래처명', '발주통화'], dropna=False).agg({
+                    '실입금액': 'sum',
+                    '선급금액': 'sum'
+                }).reset_index()
 
-                for cur in ["한화", "CNY", "USD"]:
-                    if cur not in vendor_amount.columns:
-                        vendor_amount[cur] = 0
+                settle_vendor_summary = settle_vendor_summary.rename(columns={
+                    '거래처명': '거래처'
+                })
 
-                vendor_conv = filtered.groupby('거래처명').agg({
+                settle_vendor_summary['선급금잔액'] = settle_vendor_summary['선급금액']
+
+                actual_vendor_summary = filtered.groupby(['거래처명', '실제지급통화'], dropna=False).agg({
+                    '실제지급액': 'sum',
                     '한화환산액': 'sum'
                 }).reset_index()
 
-                vendor_summary = pd.merge(
-                    vendor_amount,
-                    vendor_conv,
-                    on='거래처명',
-                    how='left'
-                ).fillna(0)
-
-                vendor_summary = vendor_summary.rename(columns={
-                    '거래처명': '거래처',
-                    '한화': 'KRW 지급액',
-                    'CNY': 'CNY 지급액',
-                    'USD': 'USD 지급액'
+                actual_vendor_summary = actual_vendor_summary.rename(columns={
+                    '거래처명': '거래처'
                 })
 
-                vendor_summary = vendor_summary[
-                    ['거래처', 'KRW 지급액', 'CNY 지급액', 'USD 지급액', '한화환산액']
-                ].sort_values('한화환산액', ascending=False).head(20)
+                vendor_summary = pd.merge(
+                    settle_vendor_summary,
+                    actual_vendor_summary,
+                    on='거래처',
+                    how='outer'
+                ).fillna(0)
+
+                vendor_total = vendor_summary.groupby('거래처')['한화환산액'].sum().reset_index()
+                vendor_top = vendor_total.sort_values('한화환산액', ascending=False).head(20)['거래처'].tolist()
+
+                vendor_summary = vendor_summary[vendor_summary['거래처'].isin(vendor_top)].copy()
+                vendor_summary['정렬용환산액'] = vendor_summary.groupby('거래처')['한화환산액'].transform('sum')
+
+                vendor_summary = vendor_summary[[
+                    '거래처',
+                    '발주통화',
+                    '실입금액',
+                    '선급금액',
+                    '선급금잔액',
+                    '실제지급통화',
+                    '실제지급액',
+                    '한화환산액',
+                    '정렬용환산액'
+                ]].sort_values(
+                    ['정렬용환산액', '거래처', '발주통화', '실제지급통화'],
+                    ascending=[False, True, True, True]
+                ).drop(columns=['정렬용환산액']).reset_index(drop=True)
 
                 st.dataframe(
                     vendor_summary.style.format(
                         '{:,.2f}',
-                        subset=['KRW 지급액', 'CNY 지급액', 'USD 지급액', '한화환산액']
+                        subset=[
+                            '실입금액',
+                            '선급금액',
+                            '선급금잔액',
+                            '실제지급액',
+                            '한화환산액'
+                        ]
                     ),
                     hide_index=True,
                     use_container_width=True,
                     height=min(620, 45 + len(vendor_summary) * 35)
                 )
 
-                st.caption("거래처별 지급 TOP은 한화환산액 기준으로 정렬됩니다.")
+                st.caption("거래처별 지급 TOP은 한화환산액 기준 상위 20개 거래처입니다. 실입금액, 선급금액, 선급금잔액은 발주통화 기준이고 실제지급액은 실제지급통화 기준입니다.")
             else:
                 st.info("거래처별 지급 내역이 없습니다.")
 
