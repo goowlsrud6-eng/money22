@@ -1768,6 +1768,28 @@ with tabs[5]:
     o_all = get_supabase_data("orders")
     ex_rates = get_supabase_data("exchange_rates")
 
+    def normalize_currency(val):
+        cur = to_str(val).upper()
+
+        if cur in ["", "KRW", "WON", "원", "한화"]:
+            return "한화"
+        if cur in ["USD", "CNY"]:
+            return cur
+
+        return cur
+
+    def make_settle_type(row):
+        base_type = to_str(row.get('유형'))
+        currency = normalize_currency(row.get('발주통화') or row.get('통화'))
+
+        if base_type == "제작(수입)" and currency in ["CNY", "USD"]:
+            return f"제작({currency})"
+
+        if base_type == "물품대" and currency in ["CNY", "USD"]:
+            return f"물품대({currency})"
+
+        return base_type
+
     if not p_all.empty:
         if '삭제' not in p_all.columns:
             p_all['삭제'] = False
@@ -1781,22 +1803,65 @@ with tabs[5]:
                 p_all[col] = 0
             p_all[col] = pd.to_numeric(p_all[col], errors='coerce').fillna(0)
 
-        for col in ['입금일', '발주번호', '거래처명', '상품명', '유형', '통화', '메모']:
+        for col in ['발주번호', '거래처명', '상품명', '유형', '통화', '발주통화', '실제지급통화', '메모']:
             if col not in p_all.columns:
                 p_all[col] = ""
+            p_all[col] = p_all[col].apply(to_str)
+
+        p_all['발주통화'] = p_all.apply(
+            lambda r: normalize_currency(r.get('발주통화') or r.get('통화') or "한화"),
+            axis=1
+        )
+        p_all['통화'] = p_all['발주통화']
+
+        p_all['실제지급통화'] = p_all.apply(
+            lambda r: normalize_currency(r.get('실제지급통화') or r.get('발주통화') or "한화"),
+            axis=1
+        )
+
+        if '실제지급액' not in p_all.columns:
+            p_all['실제지급액'] = None
+
+        p_all['실제지급액'] = pd.to_numeric(p_all['실제지급액'], errors='coerce')
+
+        fallback_actual_amount = p_all['실입금액'].where(
+            p_all['실입금액'] != 0,
+            p_all['선급금액'].where(p_all['선급금액'] > 0, 0)
+        )
+
+        missing_actual_mask = (
+            p_all['실제지급액'].isna() |
+            (
+                (p_all['실제지급액'] == 0) &
+                (p_all['실입금액'] == 0) &
+                (p_all['선급금액'] > 0)
+            )
+        )
+
+        p_all.loc[missing_actual_mask, '실제지급액'] = fallback_actual_amount.loc[missing_actual_mask]
+        p_all['실제지급액'] = p_all['실제지급액'].fillna(0)
+
+        if '지급환율' not in p_all.columns:
+            p_all['지급환율'] = 0
+
+        p_all['지급환율'] = pd.to_numeric(p_all['지급환율'], errors='coerce').fillna(0)
 
         if not o_all.empty:
-            for col in ['발주번호', '거래처명', '상품명', '유형', '발주차수', '마감여부', '발주총액', '통화']:
+            for col in ['발주번호', '거래처명', '상품명', '유형', '발주차수', '통화']:
                 if col not in o_all.columns:
-                    o_all[col] = "" if col not in ['마감여부', '발주총액'] else 0
+                    o_all[col] = ""
+
+            if '마감여부' not in o_all.columns:
+                o_all['마감여부'] = 0
+            if '발주총액' not in o_all.columns:
+                o_all['발주총액'] = 0
 
             o_all['마감여부'] = pd.to_numeric(o_all['마감여부'], errors='coerce').fillna(0).astype(int)
             o_all['발주총액'] = pd.to_numeric(o_all['발주총액'], errors='coerce').fillna(0)
+            o_all['발주통화'] = o_all['통화'].apply(normalize_currency)
 
-            order_ref = o_all.drop_duplicates(subset=['발주번호'], keep='last').copy()
-
-            ref_dict = order_ref.set_index('발주번호')[
-                ['거래처명', '상품명', '유형', '발주차수', '마감여부', '통화']
+            ref_dict = o_all.set_index('발주번호')[
+                ['거래처명', '상품명', '유형', '발주차수', '마감여부', '발주통화']
             ].to_dict('index')
 
             def fill_order_info(row):
@@ -1809,8 +1874,8 @@ with tabs[5]:
                         row['상품명'] = ref_dict[oid]['상품명']
                     if not to_str(row.get('유형')):
                         row['유형'] = ref_dict[oid]['유형']
-                    if not to_str(row.get('통화')):
-                        row['통화'] = ref_dict[oid]['통화']
+                    if not to_str(row.get('발주통화')):
+                        row['발주통화'] = ref_dict[oid]['발주통화']
 
                     row['발주차수'] = ref_dict[oid].get('발주차수', '-')
                     row['발주마감여부'] = ref_dict[oid].get('마감여부', 0)
@@ -1832,73 +1897,58 @@ with tabs[5]:
             axis=1
         )
 
-        if '메모' in p_all.columns and '송금사유' not in p_all.columns:
-            p_all['송금사유'] = p_all['메모']
-
         if '송금사유' not in p_all.columns:
-            p_all['송금사유'] = ""
+            p_all['송금사유'] = p_all['메모']
 
         p_all['dt'] = pd.to_datetime(p_all['입금일'], errors='coerce')
         p_all = p_all.dropna(subset=['dt'])
+
         p_all = p_all[p_all['삭제'] != True].copy()
 
         if p_all.empty:
-            st.info("조회 가능한 입금 내역 없음")
+            st.info("표시할 입금 내역이 없습니다.")
         else:
-            def make_settle_type(row):
-                base_type = to_str(row.get('유형'))
-                currency = to_str(row.get('통화')).upper()
-
-                if base_type == "제작(수입)" and currency in ["CNY", "USD"]:
-                    return f"제작({currency})"
-
-                return base_type
-
             p_all['정산유형'] = p_all.apply(make_settle_type, axis=1)
+            p_all['기준월'] = p_all['dt'].dt.strftime('%Y-%m')
 
-            if not ex_rates.empty:
+            if not ex_rates.empty and '날짜' in ex_rates.columns:
                 ex_rates = ex_rates.copy()
                 ex_rates['날짜'] = pd.to_datetime(ex_rates['날짜'], errors='coerce')
                 ex_rates['ym'] = ex_rates['날짜'].dt.strftime('%Y-%m')
 
             def get_monthly_rate(currency, ym):
-                currency = to_str(currency).upper()
+                currency = normalize_currency(currency)
 
-                if currency in ["", "한화", "KRW"]:
+                if currency == "한화":
                     return 1.0, "한화"
 
                 curr_col = currency.lower()
 
-                def find_month_avg(target_ym):
-                    if ex_rates.empty or curr_col not in ex_rates.columns:
-                        return None
+                if not ex_rates.empty and 'ym' in ex_rates.columns and curr_col in ex_rates.columns:
+                    rate_df = ex_rates[ex_rates['ym'] == ym].copy()
 
-                    rate_df = ex_rates[ex_rates['ym'] == target_ym].copy()
+                    if not rate_df.empty:
+                        rate_df[curr_col] = pd.to_numeric(rate_df[curr_col], errors='coerce')
+                        avg_rate = rate_df[curr_col].dropna().mean()
 
-                    if rate_df.empty:
-                        return None
+                        if pd.notna(avg_rate) and avg_rate > 0:
+                            return float(avg_rate), "월평균 환율"
 
-                    rate_df[curr_col] = pd.to_numeric(rate_df[curr_col], errors='coerce')
-                    avg_rate = rate_df[curr_col].dropna().mean()
+                    try:
+                        prev_ym = (
+                            pd.to_datetime(f"{ym}-01") - pd.DateOffset(months=1)
+                        ).strftime('%Y-%m')
 
-                    if pd.notna(avg_rate) and avg_rate > 0:
-                        return float(avg_rate)
+                        prev_df = ex_rates[ex_rates['ym'] == prev_ym].copy()
 
-                    return None
+                        if not prev_df.empty:
+                            prev_df[curr_col] = pd.to_numeric(prev_df[curr_col], errors='coerce')
+                            prev_avg = prev_df[curr_col].dropna().mean()
 
-                current_rate = find_month_avg(ym)
-
-                if current_rate is not None:
-                    return current_rate, "환율분석 월평균"
-
-                prev_ym = (
-                    pd.to_datetime(f"{ym}-01") - pd.DateOffset(months=1)
-                ).strftime('%Y-%m')
-
-                prev_rate = find_month_avg(prev_ym)
-
-                if prev_rate is not None:
-                    return prev_rate, f"전월 평균환율({prev_ym})"
+                            if pd.notna(prev_avg) and prev_avg > 0:
+                                return float(prev_avg), "전월 평균 환율"
+                    except:
+                        pass
 
                 fallback_rates = {
                     "USD": 1350.0,
@@ -1907,20 +1957,22 @@ with tabs[5]:
 
                 return fallback_rates.get(currency, 0), "기본환율"
 
-            p_all['기준월'] = p_all['dt'].dt.strftime('%Y-%m')
-
-            rate_info = p_all.apply(
-                lambda r: get_monthly_rate(r.get('통화'), r.get('기준월')),
+            actual_rate_info = p_all.apply(
+                lambda r: get_monthly_rate(r.get('실제지급통화'), r.get('기준월')),
                 axis=1
             )
 
-            p_all['적용환율'] = rate_info.apply(lambda x: x[0])
-            p_all['환율출처'] = rate_info.apply(lambda x: x[1])
+            p_all['적용환율'] = actual_rate_info.apply(lambda x: x[0])
+            p_all['환율출처'] = actual_rate_info.apply(lambda x: x[1])
+            p_all['한화환산액'] = p_all['실제지급액'] * p_all['적용환율']
 
-            p_all['실입금환산액'] = p_all['실입금액'] * p_all['적용환율']
-            p_all['선급금환산액'] = p_all['선급금액'] * p_all['적용환율']
-            p_all['선급금지급액'] = p_all['선급금액'].where(p_all['선급금액'] > 0, 0)
-            p_all['선급금지급환산액'] = p_all['선급금지급액'] * p_all['적용환율']
+            order_rate_info = p_all.apply(
+                lambda r: get_monthly_rate(r.get('발주통화'), r.get('기준월')),
+                axis=1
+            )
+
+            p_all['발주통화환율'] = order_rate_info.apply(lambda x: x[0])
+            p_all['선급금잔액환산액'] = p_all['선급금액'] * p_all['발주통화환율']
 
             st.subheader("🔎 기간 및 검색")
 
@@ -1937,7 +1989,7 @@ with tabs[5]:
             if "summary_end_date" not in st.session_state:
                 st.session_state.summary_end_date = max_date
 
-            quick_cols = st.columns(5)
+            quick_cols = st.columns([0.7, 0.8, 0.8, 0.9, 0.7, 5.1])
 
             if quick_cols[0].button("오늘", use_container_width=True, key="summary_today_btn"):
                 st.session_state.summary_start_date = today
@@ -1964,7 +2016,7 @@ with tabs[5]:
                 st.session_state.summary_end_date = max_date
                 st.rerun()
 
-            f1, f2, f3 = st.columns([1, 1, 1.2])
+            f1, f2, f3, f4, f5, f6 = st.columns([0.8, 0.8, 1.5, 1.1, 1.1, 1.1])
 
             start_date_input = f1.date_input(
                 "시작일",
@@ -1976,35 +2028,54 @@ with tabs[5]:
                 key="summary_end_date"
             )
 
-            filter_options = ["전체 유형"] + CATEGORIES + ["제작(CNY)", "제작(USD)"]
+            filter_options = [
+                "제작(국내)", "제작(수입)", "제작(CNY)", "제작(USD)",
+                "사입", "건기식", "물품대", "물품대(CNY)", "물품대(USD)",
+                "물류비", "원단비", "기타"
+            ]
             filter_options = list(dict.fromkeys(filter_options))
 
-            filter_type = f3.selectbox(
+            filter_types = f3.multiselect(
                 "유형",
                 filter_options,
                 key=f"summary_filter_type_{summary_reset_key}"
             )
 
-            s1, s2, s3 = st.columns(3)
-
-            search_vendor = s1.text_input(
+            search_vendor = f4.text_input(
                 "거래처 검색",
                 key=f"summary_search_vendor_{summary_reset_key}"
             )
 
-            search_product = s2.text_input(
+            search_product = f5.text_input(
                 "상품 검색",
                 key=f"summary_search_product_{summary_reset_key}"
             )
 
-            search_memo = s3.text_input(
+            search_memo = f6.text_input(
                 "메모 검색",
                 key=f"summary_search_memo_{summary_reset_key}"
             )
 
-            if st.button("검색/유형 초기화", use_container_width=True, key=f"summary_reset_btn_{summary_reset_key}"):
+            reset_col, blank_col = st.columns([1.1, 6.9])
+
+            if reset_col.button("검색/유형 초기화", use_container_width=True, key=f"summary_reset_btn_{summary_reset_key}"):
                 st.session_state.summary_search_reset_key += 1
                 st.rerun()
+
+            def apply_type_filter(df, selected_types):
+                if not selected_types:
+                    return df
+
+                split_types = ["제작(CNY)", "제작(USD)", "물품대(CNY)", "물품대(USD)"]
+                mask = pd.Series(False, index=df.index)
+
+                for selected_type in selected_types:
+                    if selected_type in split_types:
+                        mask = mask | (df['정산유형'] == selected_type)
+                    else:
+                        mask = mask | (df['유형'] == selected_type)
+
+                return df[mask]
 
             start_date = pd.to_datetime(start_date_input)
             end_date = pd.to_datetime(end_date_input) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
@@ -2014,128 +2085,86 @@ with tabs[5]:
                 (p_all['dt'] <= end_date)
             ].copy()
 
-            if filter_type != "전체 유형":
-                if filter_type in ["제작(CNY)", "제작(USD)"]:
-                    filtered = filtered[filtered['정산유형'] == filter_type]
-                else:
-                    filtered = filtered[filtered['유형'] == filter_type]
+            filtered = apply_type_filter(filtered, filter_types)
 
             if search_vendor:
-                filtered = filtered[
-                    filtered['거래처명'].astype(str).str.contains(search_vendor, case=False, na=False, regex=False)
-                ]
+                filtered = filtered[filtered['거래처명'].astype(str).str.contains(search_vendor, case=False, na=False)]
             if search_product:
-                filtered = filtered[
-                    filtered['상품명'].astype(str).str.contains(search_product, case=False, na=False, regex=False)
-                ]
+                filtered = filtered[filtered['상품명'].astype(str).str.contains(search_product, case=False, na=False)]
             if search_memo:
-                filtered = filtered[
-                    filtered['송금사유'].astype(str).str.contains(search_memo, case=False, na=False, regex=False)
-                ]
-
-            def currency_mask(df, currency):
-                cur = df['통화'].apply(lambda x: to_str(x).upper())
-
-                if currency == "KRW":
-                    return cur.isin(["한화", "KRW", ""])
-
-                return cur == currency
-
-            def amount_by_currency(df, amount_col, currency):
-                if df.empty or amount_col not in df.columns:
-                    return 0
-
-                return pd.to_numeric(
-                    df.loc[currency_mask(df, currency), amount_col],
-                    errors='coerce'
-                ).fillna(0).sum()
+                filtered = filtered[filtered['송금사유'].astype(str).str.contains(search_memo, case=False, na=False)]
 
             st.divider()
 
             st.subheader("📌 전체 요약")
 
-            krw_real = amount_by_currency(filtered, '실입금액', 'KRW')
-            cny_real = amount_by_currency(filtered, '실입금액', 'CNY')
-            usd_real = amount_by_currency(filtered, '실입금액', 'USD')
+            st.info(
+                "총 지급액은 실제지급액 기준입니다. 실제 돈이 나간 통화로 합산합니다.\n\n"
+                "선급금 지급액은 선급금액이 0보다 큰 입금건의 실제지급액 기준입니다.\n\n"
+                "선급금 잔액은 발주통화 기준 선급금액의 합계입니다. 잔금 정산에서 차감한 선급금은 음수로 반영됩니다."
+            )
 
-            krw_real_conv = amount_by_currency(filtered, '실입금환산액', 'KRW')
-            cny_real_conv = amount_by_currency(filtered, '실입금환산액', 'CNY')
-            usd_real_conv = amount_by_currency(filtered, '실입금환산액', 'USD')
-            total_real_conv = krw_real_conv + cny_real_conv + usd_real_conv
+            def sum_actual(df, currency):
+                return df[df['실제지급통화'] == currency]['실제지급액'].sum()
+
+            def sum_actual_conv(df, currency):
+                return df[df['실제지급통화'] == currency]['한화환산액'].sum()
+
+            def sum_prepay_balance(df, currency):
+                return df[df['발주통화'] == currency]['선급금액'].sum()
+
+            def sum_prepay_balance_conv(df, currency):
+                return df[df['발주통화'] == currency]['선급금잔액환산액'].sum()
+
+            prepay_paid = filtered[filtered['선급금액'] > 0].copy()
+
+            total_krw = sum_actual(filtered, "한화")
+            total_usd = sum_actual(filtered, "USD")
+            total_cny = sum_actual(filtered, "CNY")
+
+            total_usd_conv = sum_actual_conv(filtered, "USD")
+            total_cny_conv = sum_actual_conv(filtered, "CNY")
+            total_all_conv = filtered['한화환산액'].sum()
 
             st.markdown("#### 총 지급액")
-            pay_cols = st.columns(4)
+            t1, t2, t3, t4 = st.columns(4)
 
-            pay_cols[0].metric("KRW 총 지급액", f"{krw_real:,.2f} 원")
+            t1.metric("KRW 총 지급액", f"{total_krw:,.2f} 원")
+            t2.metric("CNY 총 지급액", f"¥{total_cny:,.2f}", delta=f"환산 {total_cny_conv:,.2f} 원", delta_color="off")
+            t3.metric("USD 총 지급액", f"${total_usd:,.2f}", delta=f"환산 {total_usd_conv:,.2f} 원", delta_color="off")
+            t4.metric("총 지급 환산액", f"{total_all_conv:,.2f} 원")
 
-            pay_cols[1].metric("CNY 총 지급액", f"¥{cny_real:,.2f}")
-            pay_cols[1].caption(f"환산 {cny_real_conv:,.2f} 원")
+            prepay_krw = sum_actual(prepay_paid, "한화")
+            prepay_usd = sum_actual(prepay_paid, "USD")
+            prepay_cny = sum_actual(prepay_paid, "CNY")
 
-            pay_cols[2].metric("USD 총 지급액", f"${usd_real:,.2f}")
-            pay_cols[2].caption(f"환산 {usd_real_conv:,.2f} 원")
-
-            pay_cols[3].metric("총 지급 환산액", f"{total_real_conv:,.2f} 원")
-            st.caption("실제로 입금/지급된 금액입니다. 선급금 차감이 있었다면 차감 후 실제 지급된 금액을 기준으로 표시합니다.")
-
-            st.divider()
-
-            krw_prepay_paid = amount_by_currency(filtered, '선급금지급액', 'KRW')
-            cny_prepay_paid = amount_by_currency(filtered, '선급금지급액', 'CNY')
-            usd_prepay_paid = amount_by_currency(filtered, '선급금지급액', 'USD')
-
-            krw_prepay_paid_conv = amount_by_currency(filtered, '선급금지급환산액', 'KRW')
-            cny_prepay_paid_conv = amount_by_currency(filtered, '선급금지급환산액', 'CNY')
-            usd_prepay_paid_conv = amount_by_currency(filtered, '선급금지급환산액', 'USD')
-            total_prepay_paid_conv = krw_prepay_paid_conv + cny_prepay_paid_conv + usd_prepay_paid_conv
+            prepay_usd_conv = sum_actual_conv(prepay_paid, "USD")
+            prepay_cny_conv = sum_actual_conv(prepay_paid, "CNY")
+            prepay_all_conv = prepay_paid['한화환산액'].sum()
 
             st.markdown("#### 선급금 지급액")
-            prepay_paid_cols = st.columns(4)
+            p1, p2, p3, p4 = st.columns(4)
 
-            prepay_paid_cols[0].metric("KRW 선급금 지급액", f"{krw_prepay_paid:,.2f} 원")
+            p1.metric("KRW 선급금 지급액", f"{prepay_krw:,.2f} 원")
+            p2.metric("CNY 선급금 지급액", f"¥{prepay_cny:,.2f}", delta=f"환산 {prepay_cny_conv:,.2f} 원", delta_color="off")
+            p3.metric("USD 선급금 지급액", f"${prepay_usd:,.2f}", delta=f"환산 {prepay_usd_conv:,.2f} 원", delta_color="off")
+            p4.metric("선급금 지급 환산액", f"{prepay_all_conv:,.2f} 원")
 
-            prepay_paid_cols[1].metric("CNY 선급금 지급액", f"¥{cny_prepay_paid:,.2f}")
-            prepay_paid_cols[1].caption(f"환산 {cny_prepay_paid_conv:,.2f} 원")
+            balance_krw = sum_prepay_balance(filtered, "한화")
+            balance_usd = sum_prepay_balance(filtered, "USD")
+            balance_cny = sum_prepay_balance(filtered, "CNY")
 
-            prepay_paid_cols[2].metric("USD 선급금 지급액", f"${usd_prepay_paid:,.2f}")
-            prepay_paid_cols[2].caption(f"환산 {usd_prepay_paid_conv:,.2f} 원")
-
-            prepay_paid_cols[3].metric("총 선급금 지급 환산액", f"{total_prepay_paid_conv:,.2f} 원")
-            st.caption("선급금으로 지급한 금액입니다. 선급금 차감 입력분은 제외하고, 양수 선급금만 합산합니다.")
-
-            st.divider()
-
-            krw_prepay_balance = amount_by_currency(filtered, '선급금액', 'KRW')
-            cny_prepay_balance = amount_by_currency(filtered, '선급금액', 'CNY')
-            usd_prepay_balance = amount_by_currency(filtered, '선급금액', 'USD')
-
-            krw_prepay_balance_conv = amount_by_currency(filtered, '선급금환산액', 'KRW')
-            cny_prepay_balance_conv = amount_by_currency(filtered, '선급금환산액', 'CNY')
-            usd_prepay_balance_conv = amount_by_currency(filtered, '선급금환산액', 'USD')
-            total_prepay_balance_conv = krw_prepay_balance_conv + cny_prepay_balance_conv + usd_prepay_balance_conv
+            balance_usd_conv = sum_prepay_balance_conv(filtered, "USD")
+            balance_cny_conv = sum_prepay_balance_conv(filtered, "CNY")
+            balance_all_conv = filtered['선급금잔액환산액'].sum()
 
             st.markdown("#### 선급금 잔액")
-            prepay_balance_cols = st.columns(4)
+            b1, b2, b3, b4 = st.columns(4)
 
-            prepay_balance_cols[0].metric("KRW 선급금 잔액", f"{krw_prepay_balance:,.2f} 원")
-
-            prepay_balance_cols[1].metric("CNY 선급금 잔액", f"¥{cny_prepay_balance:,.2f}")
-            prepay_balance_cols[1].caption(f"환산 {cny_prepay_balance_conv:,.2f} 원")
-
-            prepay_balance_cols[2].metric("USD 선급금 잔액", f"${usd_prepay_balance:,.2f}")
-            prepay_balance_cols[2].caption(f"환산 {usd_prepay_balance_conv:,.2f} 원")
-
-            prepay_balance_cols[3].metric("총 선급금 잔액 환산액", f"{total_prepay_balance_conv:,.2f} 원")
-            st.caption("아직 정산에 남아있는 선급금입니다. 지급은 양수, 차감은 음수로 반영합니다.")
-
-            with st.expander("계산 기준 보기", expanded=False):
-                st.write("총 지급액은 실제로 입금/지급된 실입금액의 합계입니다.")
-                st.write("총 지급 환산액은 KRW 실입금액, CNY 실입금 환산액, USD 실입금 환산액을 더한 금액입니다.")
-                st.write("선급금 지급액은 새로 지급한 선급금입니다. 선급금액 중 양수 금액만 합산합니다.")
-                st.write("선급금 지급 환산액은 KRW 선급금 지급액, CNY 선급금 지급 환산액, USD 선급금 지급 환산액을 더한 금액입니다.")
-                st.write("선급금 잔액은 선급금액 전체 합계입니다. 양수는 잔액 증가, 음수는 사용 또는 차감으로 반영합니다.")
-                st.write("총 선급금 잔액 환산액은 KRW 선급금 잔액, CNY 선급금 잔액 환산액, USD 선급금 잔액 환산액을 더한 금액입니다.")
-                st.write("외화 환산은 입금월의 환율분석 월평균 환율을 사용합니다. 월평균 환율이 없으면 전월 평균환율을 사용하고, 전월 평균도 없으면 기본환율을 사용합니다.")
-                st.write("삭제 처리된 입금 내역은 요약에서 제외됩니다.")
+            b1.metric("KRW 선급금 잔액", f"{balance_krw:,.2f} 원")
+            b2.metric("CNY 선급금 잔액", f"¥{balance_cny:,.2f}", delta=f"환산 {balance_cny_conv:,.2f} 원", delta_color="off")
+            b3.metric("USD 선급금 잔액", f"${balance_usd:,.2f}", delta=f"환산 {balance_usd_conv:,.2f} 원", delta_color="off")
+            b4.metric("선급금 잔액 환산액", f"{balance_all_conv:,.2f} 원")
 
             st.divider()
 
@@ -2145,71 +2174,61 @@ with tabs[5]:
                 st.subheader("💱 적용 환율")
 
                 rate_view = filtered[
-                    filtered['통화'].astype(str).str.upper().isin(["USD", "CNY"])
+                    filtered['실제지급통화'].isin(["USD", "CNY"])
                 ].groupby(
-                    ['기준월', '통화', '적용환율', '환율출처'],
+                    ['기준월', '실제지급통화', '적용환율', '환율출처'],
                     dropna=False
                 ).agg({
-                    '실입금액': 'sum',
-                    '선급금액': 'sum'
+                    '실제지급액': 'sum',
+                    '한화환산액': 'sum'
                 }).reset_index()
 
                 rate_view = rate_view.rename(columns={
                     '기준월': '적용월',
-                    '실입금액': '외화 실입금액',
-                    '선급금액': '외화 선급금액'
+                    '실제지급통화': '통화',
+                    '실제지급액': '외화 지급액'
                 }).sort_values(['적용월', '통화'])
 
                 if not rate_view.empty:
                     st.dataframe(
-                        rate_view,
+                        rate_view.style.format({
+                            '적용환율': '{:,.2f}',
+                            '외화 지급액': '{:,.2f}',
+                            '한화환산액': '{:,.2f}'
+                        }),
                         hide_index=True,
                         use_container_width=True,
-                        height=min(320, 45 + len(rate_view) * 35),
-                        column_config={
-                            "적용환율": st.column_config.NumberColumn("적용환율", format="%,.2f"),
-                            "외화 실입금액": st.column_config.NumberColumn("외화 실입금액", format="%,.2f"),
-                            "외화 선급금액": st.column_config.NumberColumn("외화 선급금액", format="%,.2f")
-                        }
+                        height=min(320, 45 + len(rate_view) * 35)
                     )
+
+                    st.caption("조회월 평균 환율이 없으면 전월 평균 환율을 사용합니다. 전월 평균도 없으면 기본환율을 사용합니다.")
                 else:
-                    st.info("조회 기간에 외화 입금 내역이 없습니다.")
+                    st.info("조회 기간에 외화 지급 내역이 없습니다.")
 
             with currency_col:
                 st.subheader("💰 통화별 요약")
 
-                currency_summary = filtered.groupby('통화', dropna=False).agg({
-                    '실입금액': 'sum',
-                    '실입금환산액': 'sum',
-                    '선급금지급액': 'sum',
-                    '선급금지급환산액': 'sum',
-                    '선급금액': 'sum',
-                    '선급금환산액': 'sum'
+                currency_summary = filtered.groupby('실제지급통화').agg({
+                    '실제지급액': 'sum',
+                    '한화환산액': 'sum'
                 }).reset_index()
 
                 currency_summary = currency_summary.rename(columns={
-                    '실입금환산액': '실입금 환산액',
-                    '선급금지급액': '선급금 지급액',
-                    '선급금지급환산액': '선급금 지급 환산액',
-                    '선급금액': '선급금 잔액',
-                    '선급금환산액': '선급금 잔액 환산액'
-                })
+                    '실제지급통화': '지급통화'
+                }).sort_values('지급통화')
 
                 if not currency_summary.empty:
                     st.dataframe(
-                        currency_summary,
+                        currency_summary.style.format(
+                            '{:,.2f}',
+                            subset=['실제지급액', '한화환산액']
+                        ),
                         hide_index=True,
                         use_container_width=True,
-                        height=min(320, 45 + len(currency_summary) * 35),
-                        column_config={
-                            "실입금액": st.column_config.NumberColumn("실입금액", format="%,.2f"),
-                            "실입금 환산액": st.column_config.NumberColumn("실입금 환산액", format="%,.2f"),
-                            "선급금 지급액": st.column_config.NumberColumn("선급금 지급액", format="%,.2f"),
-                            "선급금 지급 환산액": st.column_config.NumberColumn("선급금 지급 환산액", format="%,.2f"),
-                            "선급금 잔액": st.column_config.NumberColumn("선급금 잔액", format="%,.2f"),
-                            "선급금 잔액 환산액": st.column_config.NumberColumn("선급금 잔액 환산액", format="%,.2f")
-                        }
+                        height=min(320, 45 + len(currency_summary) * 35)
                     )
+
+                    st.caption("통화별 요약은 실제지급통화 기준입니다.")
                 else:
                     st.info("통화별 요약 내역이 없습니다.")
 
@@ -2217,39 +2236,28 @@ with tabs[5]:
 
             st.subheader("📊 유형별 지급 요약")
 
-            type_summary = filtered.groupby(['정산유형', '통화'], dropna=False).agg({
-                '실입금액': 'sum',
-                '실입금환산액': 'sum',
-                '선급금지급액': 'sum',
-                '선급금지급환산액': 'sum',
-                '선급금액': 'sum',
-                '선급금환산액': 'sum'
+            type_summary = filtered.groupby(['정산유형', '실제지급통화'], dropna=False).agg({
+                '실제지급액': 'sum',
+                '한화환산액': 'sum'
             }).reset_index()
 
             type_summary = type_summary.rename(columns={
                 '정산유형': '유형',
-                '실입금환산액': '실입금 환산액',
-                '선급금지급액': '선급금 지급액',
-                '선급금지급환산액': '선급금 지급 환산액',
-                '선급금액': '선급금 잔액',
-                '선급금환산액': '선급금 잔액 환산액'
-            }).sort_values(['유형', '통화'])
+                '실제지급통화': '지급통화'
+            }).sort_values(['유형', '지급통화'])
 
             if not type_summary.empty:
                 st.dataframe(
-                    type_summary,
+                    type_summary.style.format(
+                        '{:,.2f}',
+                        subset=['실제지급액', '한화환산액']
+                    ),
                     hide_index=True,
                     use_container_width=True,
-                    height=min(520, 45 + len(type_summary) * 35),
-                    column_config={
-                        "실입금액": st.column_config.NumberColumn("실입금액", format="%,.2f"),
-                        "실입금 환산액": st.column_config.NumberColumn("실입금 환산액", format="%,.2f"),
-                        "선급금 지급액": st.column_config.NumberColumn("선급금 지급액", format="%,.2f"),
-                        "선급금 지급 환산액": st.column_config.NumberColumn("선급금 지급 환산액", format="%,.2f"),
-                        "선급금 잔액": st.column_config.NumberColumn("선급금 잔액", format="%,.2f"),
-                        "선급금 잔액 환산액": st.column_config.NumberColumn("선급금 잔액 환산액", format="%,.2f")
-                    }
+                    height=min(520, 45 + len(type_summary) * 35)
                 )
+
+                st.caption("유형별 지급 요약은 실제 지급 기준입니다. 유형은 발주통화 기준으로 구분하고, 금액은 실제지급통화 기준으로 표시합니다.")
             else:
                 st.info("유형별 요약 내역이 없습니다.")
 
@@ -2257,39 +2265,52 @@ with tabs[5]:
 
             st.subheader("🏢 거래처별 지급 TOP")
 
-            vendor_summary = filtered.groupby('거래처명', dropna=False).agg({
-                '실입금액': 'sum',
-                '실입금환산액': 'sum',
-                '선급금지급액': 'sum',
-                '선급금지급환산액': 'sum',
-                '선급금액': 'sum',
-                '선급금환산액': 'sum'
-            }).reset_index()
+            if not filtered.empty:
+                vendor_amount = filtered.pivot_table(
+                    index='거래처명',
+                    columns='실제지급통화',
+                    values='실제지급액',
+                    aggfunc='sum',
+                    fill_value=0
+                ).reset_index()
 
-            vendor_summary = vendor_summary.rename(columns={
-                '거래처명': '거래처',
-                '실입금환산액': '실입금 환산액',
-                '선급금지급액': '선급금 지급액',
-                '선급금지급환산액': '선급금 지급 환산액',
-                '선급금액': '선급금 잔액',
-                '선급금환산액': '선급금 잔액 환산액'
-            }).sort_values('실입금 환산액', ascending=False).head(20)
+                for cur in ["한화", "CNY", "USD"]:
+                    if cur not in vendor_amount.columns:
+                        vendor_amount[cur] = 0
 
-            if not vendor_summary.empty:
+                vendor_conv = filtered.groupby('거래처명').agg({
+                    '한화환산액': 'sum'
+                }).reset_index()
+
+                vendor_summary = pd.merge(
+                    vendor_amount,
+                    vendor_conv,
+                    on='거래처명',
+                    how='left'
+                ).fillna(0)
+
+                vendor_summary = vendor_summary.rename(columns={
+                    '거래처명': '거래처',
+                    '한화': 'KRW 지급액',
+                    'CNY': 'CNY 지급액',
+                    'USD': 'USD 지급액'
+                })
+
+                vendor_summary = vendor_summary[
+                    ['거래처', 'KRW 지급액', 'CNY 지급액', 'USD 지급액', '한화환산액']
+                ].sort_values('한화환산액', ascending=False).head(20)
+
                 st.dataframe(
-                    vendor_summary,
+                    vendor_summary.style.format(
+                        '{:,.2f}',
+                        subset=['KRW 지급액', 'CNY 지급액', 'USD 지급액', '한화환산액']
+                    ),
                     hide_index=True,
                     use_container_width=True,
-                    height=min(520, 45 + len(vendor_summary) * 35),
-                    column_config={
-                        "실입금액": st.column_config.NumberColumn("실입금액", format="%,.2f"),
-                        "실입금 환산액": st.column_config.NumberColumn("실입금 환산액", format="%,.2f"),
-                        "선급금 지급액": st.column_config.NumberColumn("선급금 지급액", format="%,.2f"),
-                        "선급금 지급 환산액": st.column_config.NumberColumn("선급금 지급 환산액", format="%,.2f"),
-                        "선급금 잔액": st.column_config.NumberColumn("선급금 잔액", format="%,.2f"),
-                        "선급금 잔액 환산액": st.column_config.NumberColumn("선급금 잔액 환산액", format="%,.2f")
-                    }
+                    height=min(620, 45 + len(vendor_summary) * 35)
                 )
+
+                st.caption("거래처별 지급 TOP은 한화환산액 기준으로 정렬됩니다.")
             else:
                 st.info("거래처별 지급 내역이 없습니다.")
 
@@ -2298,46 +2319,29 @@ with tabs[5]:
             st.subheader("🧾 제작 입금 상세")
 
             production_detail = filtered[
-                filtered['유형'].astype(str).str.contains("제작", case=False, na=False, regex=False)
+                filtered['정산유형'].astype(str).str.contains("제작", case=False, na=False) |
+                filtered['유형'].astype(str).str.contains("제작", case=False, na=False)
             ].copy()
 
-            def safe_series(df, col_name, default=""):
-                if col_name in df.columns:
-                    data = df[col_name]
-                    if isinstance(data, pd.DataFrame):
-                        data = data.iloc[:, 0]
-                    return data
-                return pd.Series([default] * len(df), index=df.index)
-
             if not production_detail.empty:
-                memo_series = safe_series(production_detail, '송금사유', "").astype(str)
-                memo_fallback = safe_series(production_detail, '메모', "").astype(str)
-
-                memo_series = memo_series.where(
-                    ~memo_series.str.strip().isin(["", "nan", "None"]),
-                    memo_fallback
-                )
-
                 production_display = pd.DataFrame({
-                    "입금일": production_detail['dt'].dt.strftime('%Y-%m-%d'),
-                    "거래처": safe_series(production_detail, '거래처명', ""),
-                    "상품": safe_series(production_detail, '상품명', ""),
-                    "구분": safe_series(production_detail, '정산유형', ""),
-                    "통화": safe_series(production_detail, '통화', ""),
-                    "실입금액": pd.to_numeric(safe_series(production_detail, '실입금액', 0), errors='coerce').fillna(0),
-                    "실입금환산액": pd.to_numeric(safe_series(production_detail, '실입금환산액', 0), errors='coerce').fillna(0),
-                    "선급금액": pd.to_numeric(safe_series(production_detail, '선급금액', 0), errors='coerce').fillna(0),
-                    "선급금환산액": pd.to_numeric(safe_series(production_detail, '선급금환산액', 0), errors='coerce').fillna(0),
-                    "적용환율": pd.to_numeric(safe_series(production_detail, '적용환율', 0), errors='coerce').fillna(0),
-                    "환율출처": safe_series(production_detail, '환율출처', ""),
-                    "상태": safe_series(production_detail, '발주상태', ""),
-                    "메모": memo_series
+                    '입금일': production_detail['dt'].dt.strftime('%Y-%m-%d'),
+                    '거래처': production_detail['거래처명'].astype(str),
+                    '상품': production_detail['상품명'].astype(str),
+                    '구분': production_detail['정산유형'].astype(str),
+                    '발주통화': production_detail['발주통화'].astype(str),
+                    '실입금액': production_detail['실입금액'],
+                    '선급금액': production_detail['선급금액'],
+                    '실제지급통화': production_detail['실제지급통화'].astype(str),
+                    '실제지급액': production_detail['실제지급액'],
+                    '적용환율': production_detail['적용환율'],
+                    '환율출처': production_detail['환율출처'].astype(str),
+                    '한화환산액': production_detail['한화환산액'],
+                    '상태': production_detail['발주상태'].astype(str),
+                    '메모': production_detail['송금사유'].astype(str)
                 })
 
-                production_display = production_display.sort_values(
-                    '입금일',
-                    ascending=False
-                ).reset_index(drop=True)
+                production_display = production_display.sort_values('입금일', ascending=False).reset_index(drop=True)
 
                 st.dataframe(
                     production_display,
@@ -2346,10 +2350,10 @@ with tabs[5]:
                     height=min(700, 45 + len(production_display) * 35),
                     column_config={
                         "실입금액": st.column_config.NumberColumn("실입금액", format="%,.2f"),
-                        "실입금환산액": st.column_config.NumberColumn("실입금환산액", format="%,.2f"),
                         "선급금액": st.column_config.NumberColumn("선급금액", format="%,.2f"),
-                        "선급금환산액": st.column_config.NumberColumn("선급금환산액", format="%,.2f"),
-                        "적용환율": st.column_config.NumberColumn("적용환율", format="%,.2f")
+                        "실제지급액": st.column_config.NumberColumn("실제지급액", format="%,.2f"),
+                        "적용환율": st.column_config.NumberColumn("적용환율", format="%,.2f"),
+                        "한화환산액": st.column_config.NumberColumn("한화환산액", format="%,.2f")
                     }
                 )
 
@@ -2362,7 +2366,6 @@ with tabs[5]:
                     mime="text/csv",
                     use_container_width=True
                 )
-
             else:
                 st.info("조회 기간에 제작 입금 내역이 없습니다.")
 
