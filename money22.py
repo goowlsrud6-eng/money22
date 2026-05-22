@@ -1755,6 +1755,7 @@ with tabs[4]:
     else:
         st.info("환율 데이터를 업로드해 주세요.")
 
+
 # --- [Tab 5] 입금 요약 ---
 with tabs[5]:
     st.header("📊 입금 요약")
@@ -2235,65 +2236,116 @@ with tabs[5]:
             st.divider()
 
             st.subheader("📊 유형별 지급 요약")
+            st.caption("발주정산액은 발주통화 기준으로 정산에 반영되는 금액입니다. 실제지급액은 실제 돈이 나간 통화 기준입니다.")
 
-            settle_type_summary = filtered.groupby(['정산유형', '발주통화'], dropna=False).agg({
-                '실입금액': 'sum',
-                '선급금액': 'sum'
-            }).reset_index()
+            same_currency_mask = (
+                filtered['발주통화'].astype(str).str.upper() ==
+                filtered['실제지급통화'].astype(str).str.upper()
+            )
 
-            settle_type_summary = settle_type_summary.rename(columns={
-                '정산유형': '유형'
-            })
+            production_mask = (
+                filtered['정산유형'].astype(str).str.contains("제작", case=False, na=False) |
+                filtered['유형'].astype(str).str.contains("제작", case=False, na=False)
+            )
 
-            settle_type_summary['선급금잔액'] = settle_type_summary['선급금액']
+            foreign_type_mask = filtered['정산유형'].astype(str).str.contains(
+                r'\((CNY|USD)\)',
+                regex=True,
+                na=False
+            )
 
-            actual_type_summary = filtered.groupby(['정산유형', '실제지급통화'], dropna=False).agg({
-                '실제지급액': 'sum',
-                '한화환산액': 'sum'
-            }).reset_index()
+            mixed_currency_mask = ~same_currency_mask
+            special_mask = production_mask | foreign_type_mask | mixed_currency_mask
 
-            actual_type_summary = actual_type_summary.rename(columns={
-                '정산유형': '유형'
-            })
+            general_base = filtered[
+                (~special_mask) &
+                same_currency_mask
+            ].copy()
 
-            type_summary = pd.merge(
-                settle_type_summary,
-                actual_type_summary,
-                on='유형',
-                how='outer'
-            ).fillna(0)
+            special_base = filtered[special_mask].copy()
 
-            type_summary = type_summary[[
-                '유형',
-                '발주통화',
-                '실입금액',
-                '선급금액',
-                '선급금잔액',
-                '실제지급통화',
-                '실제지급액',
-                '한화환산액'
-            ]].sort_values(['유형', '발주통화', '실제지급통화']).reset_index(drop=True)
+            type_left, type_right = st.columns(2)
 
-            if not type_summary.empty:
-                st.dataframe(
-                    type_summary.style.format(
-                        '{:,.2f}',
-                        subset=[
-                            '실입금액',
-                            '선급금액',
-                            '선급금잔액',
-                            '실제지급액',
-                            '한화환산액'
-                        ]
-                    ),
-                    hide_index=True,
-                    use_container_width=True,
-                    height=min(620, 45 + len(type_summary) * 35)
-                )
+            with type_left:
+                st.markdown("#### 일반 지급 요약")
 
-                st.caption("유형별 지급 요약은 정산 기준과 실제 지급 기준을 함께 보여줍니다. 실입금액, 선급금액, 선급금잔액은 발주통화 기준이고 실제지급액은 실제지급통화 기준입니다.")
-            else:
-                st.info("유형별 요약 내역이 없습니다.")
+                general_summary = general_base.groupby(
+                    ['정산유형', '발주통화'],
+                    dropna=False
+                ).agg({
+                    '실입금액': 'sum',
+                    '선급금액': 'sum',
+                    '실제지급액': 'sum',
+                    '한화환산액': 'sum'
+                }).reset_index()
+
+                general_summary = general_summary.rename(columns={
+                    '정산유형': '유형',
+                    '발주통화': '통화',
+                    '실입금액': '발주정산액',
+                    '선급금액': '선급금잔액'
+                }).sort_values(['유형', '통화']).reset_index(drop=True)
+
+                if not general_summary.empty:
+                    st.dataframe(
+                        general_summary.style.format(
+                            '{:,.2f}',
+                            subset=[
+                                '발주정산액',
+                                '선급금잔액',
+                                '실제지급액',
+                                '한화환산액'
+                            ]
+                        ),
+                        hide_index=True,
+                        use_container_width=True,
+                        height=min(520, 45 + len(general_summary) * 35)
+                    )
+
+                    st.caption("일반 지급 요약은 발주통화와 실제지급통화가 같은 건을 모아 표시합니다.")
+                else:
+                    st.info("일반 지급 요약 내역이 없습니다.")
+
+            with type_right:
+                st.markdown("#### 제작/외화 정산 요약")
+
+                special_summary = special_base.groupby(
+                    ['정산유형', '발주통화', '실제지급통화'],
+                    dropna=False
+                ).agg({
+                    '실입금액': 'sum',
+                    '선급금액': 'sum',
+                    '실제지급액': 'sum',
+                    '한화환산액': 'sum'
+                }).reset_index()
+
+                special_summary = special_summary.rename(columns={
+                    '정산유형': '유형',
+                    '실입금액': '발주정산액',
+                    '선급금액': '선급금잔액'
+                }).sort_values(
+                    ['유형', '발주통화', '실제지급통화']
+                ).reset_index(drop=True)
+
+                if not special_summary.empty:
+                    st.dataframe(
+                        special_summary.style.format(
+                            '{:,.2f}',
+                            subset=[
+                                '발주정산액',
+                                '선급금잔액',
+                                '실제지급액',
+                                '한화환산액'
+                            ]
+                        ),
+                        hide_index=True,
+                        use_container_width=True,
+                        height=min(520, 45 + len(special_summary) * 35)
+                    )
+
+                    st.caption("제작/외화 정산 요약은 제작 건, 외화 유형, 발주통화와 실제지급통화가 다른 건을 함께 표시합니다.")
+                else:
+                    st.info("제작/외화 정산 요약 내역이 없습니다.")
 
             st.divider()
 
@@ -2348,11 +2400,15 @@ with tabs[5]:
                     ascending=[False, True, True, True]
                 ).drop(columns=['정렬용환산액']).reset_index(drop=True)
 
+                vendor_summary = vendor_summary.rename(columns={
+                    '실입금액': '발주정산액'
+                })
+
                 st.dataframe(
                     vendor_summary.style.format(
                         '{:,.2f}',
                         subset=[
-                            '실입금액',
+                            '발주정산액',
                             '선급금액',
                             '선급금잔액',
                             '실제지급액',
@@ -2364,7 +2420,7 @@ with tabs[5]:
                     height=min(620, 45 + len(vendor_summary) * 35)
                 )
 
-                st.caption("거래처별 지급 TOP은 한화환산액 기준 상위 20개 거래처입니다. 실입금액, 선급금액, 선급금잔액은 발주통화 기준이고 실제지급액은 실제지급통화 기준입니다.")
+                st.caption("거래처별 지급 TOP은 한화환산액 기준 상위 20개 거래처입니다. 발주정산액, 선급금액, 선급금잔액은 발주통화 기준이고 실제지급액은 실제지급통화 기준입니다.")
             else:
                 st.info("거래처별 지급 내역이 없습니다.")
 
@@ -2384,7 +2440,7 @@ with tabs[5]:
                     '상품': production_detail['상품명'].astype(str),
                     '구분': production_detail['정산유형'].astype(str),
                     '발주통화': production_detail['발주통화'].astype(str),
-                    '실입금액': production_detail['실입금액'],
+                    '발주정산액': production_detail['실입금액'],
                     '선급금액': production_detail['선급금액'],
                     '실제지급통화': production_detail['실제지급통화'].astype(str),
                     '실제지급액': production_detail['실제지급액'],
@@ -2403,7 +2459,7 @@ with tabs[5]:
                     use_container_width=True,
                     height=min(700, 45 + len(production_display) * 35),
                     column_config={
-                        "실입금액": st.column_config.NumberColumn("실입금액", format="%,.2f"),
+                        "발주정산액": st.column_config.NumberColumn("발주정산액", format="%,.2f"),
                         "선급금액": st.column_config.NumberColumn("선급금액", format="%,.2f"),
                         "실제지급액": st.column_config.NumberColumn("실제지급액", format="%,.2f"),
                         "적용환율": st.column_config.NumberColumn("적용환율", format="%,.2f"),
