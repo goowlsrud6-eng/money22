@@ -1002,15 +1002,8 @@ with tabs[2]:
 
             f1, f2, f3, f4, f5, f6 = st.columns([0.8, 0.8, 1.5, 1.1, 1.1, 1.1])
 
-            start_date_input = f1.date_input(
-                "시작일",
-                key="detail_start_date"
-            )
-
-            end_date_input = f2.date_input(
-                "종료일",
-                key="detail_end_date"
-            )
+            start_date_input = f1.date_input("시작일", key="detail_start_date")
+            end_date_input = f2.date_input("종료일", key="detail_end_date")
 
             filter_options = [
                 "전체 유형"
@@ -1026,20 +1019,9 @@ with tabs[2]:
                 key=f"detail_filter_cat_{search_reset_key}"
             )
 
-            search_vendor = f4.text_input(
-                "업체 검색",
-                key=f"detail_search_vendor_{search_reset_key}"
-            )
-
-            search_product = f5.text_input(
-                "상품 검색",
-                key=f"detail_search_product_{search_reset_key}"
-            )
-
-            search_order = f6.text_input(
-                "발주차수 검색",
-                key=f"detail_search_order_{search_reset_key}"
-            )
+            search_vendor = f4.text_input("업체 검색", key=f"detail_search_vendor_{search_reset_key}")
+            search_product = f5.text_input("상품 검색", key=f"detail_search_product_{search_reset_key}")
+            search_order = f6.text_input("발주차수 검색", key=f"detail_search_order_{search_reset_key}")
 
             o1, o2, o3 = st.columns([1.1, 1.1, 5.8])
 
@@ -1192,7 +1174,7 @@ with tabs[2]:
 
                 settle_payment_sum = settle_payment_sum.rename(columns={
                     '정산유형': '유형',
-                    '실입금액': '총지급액'
+                    '실입금액': '발주정산액'
                 })
 
                 settle_summary = pd.merge(
@@ -1204,24 +1186,24 @@ with tabs[2]:
 
                 settle_summary['미수잔액'] = (
                     settle_summary['총발주액'] -
-                    (settle_summary['총지급액'] + settle_summary['선급금액'])
+                    (settle_summary['발주정산액'] + settle_summary['선급금액'])
                 )
 
                 settle_summary = settle_summary[
-                    ['유형', '발주통화', '총발주액', '총지급액', '선급금액', '미수잔액']
+                    ['유형', '발주통화', '총발주액', '발주정산액', '선급금액', '미수잔액']
                 ].sort_values(['유형', '발주통화']).reset_index(drop=True)
 
                 if not settle_summary.empty:
                     st.dataframe(
                         settle_summary.style.format(
                             '{:,.2f}',
-                            subset=['총발주액', '총지급액', '선급금액', '미수잔액']
+                            subset=['총발주액', '발주정산액', '선급금액', '미수잔액']
                         ),
                         hide_index=True,
                         use_container_width=True,
                         height=min(420, 45 + len(settle_summary) * 35)
                     )
-                    st.caption("정산 기준 요약은 발주통화 기준입니다. 총지급액, 선급금액, 미수잔액은 모두 발주통화 기준으로 계산됩니다.")
+                    st.caption("정산 기준 요약은 발주통화 기준입니다. 발주정산액, 선급금액, 미수잔액은 모두 발주통화 기준으로 계산됩니다.")
                 else:
                     st.info("정산 기준 요약 내역이 없습니다.")
 
@@ -1281,6 +1263,7 @@ with tabs[2]:
                     '발주번호', '발주차수', '진행상태', '거래처명', '상품명',
                     '발주총액', '실입금액', '선급금액', '미수잔액', '발주통화'
                 ]].rename(columns={
+                    '실입금액': '발주정산액',
                     '발주통화': '통화'
                 })
 
@@ -1308,7 +1291,7 @@ with tabs[2]:
                 st.dataframe(
                     disp_s.style.apply(highlight_row, axis=1).format(
                         '{:,.2f}',
-                        subset=['발주총액', '실입금액', '선급금액', '미수잔액']
+                        subset=['발주총액', '발주정산액', '선급금액', '미수잔액']
                     ),
                     hide_index=True,
                     use_container_width=True
@@ -1359,6 +1342,10 @@ with tabs[2]:
             if not show_deleted:
                 display_p = display_p[display_p['삭제'] != True].reset_index(drop=True)
 
+            display_p = display_p.rename(columns={
+                '실입금액': '발주정산액'
+            })
+
             editor_key = f"payment_editor_v10_{search_reset_key}"
 
             edited_p = st.data_editor(
@@ -1371,7 +1358,7 @@ with tabs[2]:
                     "삭제": st.column_config.CheckboxColumn("삭제"),
                     "발주통화": st.column_config.SelectboxColumn("발주통화", options=["한화", "USD", "CNY"]),
                     "실제지급통화": st.column_config.SelectboxColumn("실제지급통화", options=["한화", "USD", "CNY"]),
-                    "실입금액": st.column_config.NumberColumn("실입금액", format="%,.2f", step=0.01),
+                    "발주정산액": st.column_config.NumberColumn("발주정산액", format="%,.2f", step=0.01),
                     "선급금액": st.column_config.NumberColumn("선급금액", format="%,.2f", step=0.01),
                     "실제지급액": st.column_config.NumberColumn("실제지급액", format="%,.2f", step=0.01),
                     "지급환율": st.column_config.NumberColumn("지급환율", format="%.6f", step=0.000001),
@@ -1393,6 +1380,8 @@ with tabs[2]:
                             tid = int(display_p.iloc[int(idx)]["id"])
                             up_data = {}
 
+                            if "발주정산액" in changes:
+                                up_data["실입금액"] = round(to_float(changes["발주정산액"]), 2)
                             if "실입금액" in changes:
                                 up_data["실입금액"] = round(to_float(changes["실입금액"]), 2)
                             if "선급금액" in changes:
