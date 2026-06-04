@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import re
 import os
+from zoneinfo import ZoneInfo
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
 import plotly.graph_objects as go
@@ -141,14 +142,29 @@ def to_str(val):
 
 def smart_date(date_val):
     try:
-        if pd.isna(date_val) or str(date_val).strip() == "": return datetime.now().strftime("%Y-%m-%d")
-        if isinstance(date_val, (datetime, pd.Timestamp)): return date_val.strftime("%Y-%m-%d")
+        now_kst = datetime.now(ZoneInfo("Asia/Seoul"))
+
+        if pd.isna(date_val) or str(date_val).strip() == "":
+            return now_kst.strftime("%Y-%m-%d")
+
+        if isinstance(date_val, (datetime, pd.Timestamp)):
+            return date_val.strftime("%Y-%m-%d")
+
         ds = str(date_val).strip()
         ds = re.sub(r'(\d{1,2})월\s*(\d{1,2})일', r'\1-\2', ds)
-        if re.match(r'^\d{1,2}[/-]\d{1,2}$', ds): ds = f"{datetime.now().year}-{ds.replace('/', '-')}"
+
+        if re.match(r'^\d{1,2}[/-]\d{1,2}$', ds):
+            ds = f"{now_kst.year}-{ds.replace('/', '-')}"
+
         ds = ds.replace(".", "-").replace("/", "-").replace(" ", "")
         return pd.to_datetime(ds).strftime("%Y-%m-%d")
-    except: return datetime.now().strftime("%Y-%m-%d")
+
+    except:
+        return datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d")
+
+
+def today_kst():
+    return datetime.now(ZoneInfo("Asia/Seoul")).date()
 
 # ==============================================================================
 # 4. 메인 UI 및 탭별 로직 (Tab 0 ~ Tab 4 완전체)
@@ -216,7 +232,7 @@ with tabs[0]:
 
             p_date = st.date_input(
                 "입금일자",
-                value=datetime.now(),
+                value=today_kst(),
                 key=f"p_date_{auto_key}"
             )
 
@@ -644,7 +660,7 @@ with tabs[1]:
 
                     new_order = {
                         "발주번호": str(m_oid).strip(),
-                        "발주일": datetime.now().strftime("%Y-%m-%d"),
+                        "발주일": today_kst().strftime("%Y-%m-%d"),
                         "발주차수": str(m_step).strip(),
                         "거래처명": str(m_vn).strip(),
                         "상품명": str(m_prod).strip(),
@@ -963,7 +979,7 @@ with tabs[2]:
             min_date = p_all['dt'].min().date()
             max_date = p_all['dt'].max().date()
 
-            today = datetime.now().date()
+            today = today_kst()
             month_start = today.replace(day=1)
             last_month_end = month_start - timedelta(days=1)
             last_month_start = last_month_end.replace(day=1)
@@ -1969,7 +1985,7 @@ with tabs[5]:
             min_date = p_all['dt'].min().date()
             max_date = p_all['dt'].max().date()
 
-            today = datetime.now().date()
+            today = today_kst()
             month_start = today.replace(day=1)
             last_month_end = month_start - timedelta(days=1)
             last_month_start = last_month_end.replace(day=1)
