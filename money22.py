@@ -18,7 +18,7 @@ SUPABASE_URL = "https://nbpeuxblyphzmbktcqtq.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5icGV1eGJseXBoem1ia3RjcXRxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzcwMDc1NTEsImV4cCI6MjA5MjU4MzU1MX0.Q6A8T6_JiPIOBnjf8wKtjWTsRAk-pzvKdSqbfPp-3w4"
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-CATEGORIES = ["제작(국내)", "제작(수입)", "사입", "건기식", "물품대", "물류비", "원단비", "기타"]
+CATEGORIES = ["제작(국내)", "제작(수입)", "사입", "건기식", "물품대", "물류비", "라벨비", "기타"]
 
 if 'order_up_key' not in st.session_state: st.session_state.order_up_key = 0
 if 'pay_up_key' not in st.session_state: st.session_state.pay_up_key = 1000
@@ -2037,7 +2037,7 @@ with tabs[5]:
             filter_options = [
                 "제작(국내)", "제작(수입)", "제작(CNY)", "제작(USD)",
                 "사입", "건기식", "물품대", "물품대(CNY)", "물품대(USD)",
-                "물류비", "원단비", "기타"
+                "물류비", "라벨비", "기타"
             ]
             filter_options = list(dict.fromkeys(filter_options))
 
