@@ -2037,7 +2037,7 @@ with tabs[5]:
             filter_options = [
                 "제작(국내)", "제작(수입)", "제작(CNY)", "제작(USD)",
                 "사입", "건기식", "물품대", "물품대(CNY)", "물품대(USD)",
-                "물류비", "라벨비", "기타"
+                "물류비", "원단비", "기타"
             ]
             filter_options = list(dict.fromkeys(filter_options))
 
@@ -2357,32 +2357,22 @@ with tabs[5]:
             st.subheader("🏢 거래처별 지급 TOP")
 
             if not filtered.empty:
-                settle_vendor_summary = filtered.groupby(['거래처명', '발주통화'], dropna=False).agg({
+                vendor_summary = filtered.groupby(
+                    ['거래처명', '발주통화', '실제지급통화'],
+                    dropna=False
+                ).agg({
                     '실입금액': 'sum',
-                    '선급금액': 'sum'
-                }).reset_index()
-
-                settle_vendor_summary = settle_vendor_summary.rename(columns={
-                    '거래처명': '거래처'
-                })
-
-                settle_vendor_summary['선급금잔액'] = settle_vendor_summary['선급금액']
-
-                actual_vendor_summary = filtered.groupby(['거래처명', '실제지급통화'], dropna=False).agg({
+                    '선급금액': 'sum',
                     '실제지급액': 'sum',
                     '한화환산액': 'sum'
                 }).reset_index()
 
-                actual_vendor_summary = actual_vendor_summary.rename(columns={
-                    '거래처명': '거래처'
+                vendor_summary = vendor_summary.rename(columns={
+                    '거래처명': '거래처',
+                    '실입금액': '발주정산액'
                 })
 
-                vendor_summary = pd.merge(
-                    settle_vendor_summary,
-                    actual_vendor_summary,
-                    on='거래처',
-                    how='outer'
-                ).fillna(0)
+                vendor_summary['선급금잔액'] = vendor_summary['선급금액']
 
                 vendor_total = vendor_summary.groupby('거래처')['한화환산액'].sum().reset_index()
                 vendor_top = vendor_total.sort_values('한화환산액', ascending=False).head(20)['거래처'].tolist()
@@ -2393,7 +2383,7 @@ with tabs[5]:
                 vendor_summary = vendor_summary[[
                     '거래처',
                     '발주통화',
-                    '실입금액',
+                    '발주정산액',
                     '선급금액',
                     '선급금잔액',
                     '실제지급통화',
@@ -2404,10 +2394,6 @@ with tabs[5]:
                     ['정렬용환산액', '거래처', '발주통화', '실제지급통화'],
                     ascending=[False, True, True, True]
                 ).drop(columns=['정렬용환산액']).reset_index(drop=True)
-
-                vendor_summary = vendor_summary.rename(columns={
-                    '실입금액': '발주정산액'
-                })
 
                 st.dataframe(
                     vendor_summary.style.format(
@@ -2425,7 +2411,7 @@ with tabs[5]:
                     height=min(620, 45 + len(vendor_summary) * 35)
                 )
 
-                st.caption("거래처별 지급 TOP은 한화환산액 기준 상위 20개 거래처입니다. 발주정산액, 선급금액, 선급금잔액은 발주통화 기준이고 실제지급액은 실제지급통화 기준입니다.")
+                st.caption("거래처별 지급 TOP은 한화환산액 기준 상위 20개 거래처입니다. 같은 거래처라도 발주통화와 실제지급통화 조합별로 표시됩니다.")
             else:
                 st.info("거래처별 지급 내역이 없습니다.")
 
