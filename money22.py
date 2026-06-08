@@ -2100,6 +2100,19 @@ with tabs[5]:
             if search_memo:
                 filtered = filtered[filtered['송금사유'].astype(str).str.contains(search_memo, case=False, na=False)]
 
+            balance_base = p_all[
+                p_all['dt'] <= end_date
+            ].copy()
+
+            balance_base = apply_type_filter(balance_base, filter_types)
+
+            if search_vendor:
+                balance_base = balance_base[balance_base['거래처명'].astype(str).str.contains(search_vendor, case=False, na=False)]
+            if search_product:
+                balance_base = balance_base[balance_base['상품명'].astype(str).str.contains(search_product, case=False, na=False)]
+            if search_memo:
+                balance_base = balance_base[balance_base['송금사유'].astype(str).str.contains(search_memo, case=False, na=False)]
+
             st.divider()
 
             st.subheader("📌 전체 요약")
@@ -2154,16 +2167,16 @@ with tabs[5]:
             p3.metric("USD 선급금 지급액", f"${prepay_usd:,.2f}", delta=f"환산 {prepay_usd_conv:,.2f} 원", delta_color="off")
             p4.metric("선급금 지급 환산액", f"{prepay_all_conv:,.2f} 원")
 
-            balance_krw = sum_prepay_balance(filtered, "한화")
-            balance_usd = sum_prepay_balance(filtered, "USD")
-            balance_cny = sum_prepay_balance(filtered, "CNY")
+            balance_krw = sum_prepay_balance(balance_base, "한화")
+            balance_usd = sum_prepay_balance(balance_base, "USD")
+            balance_cny = sum_prepay_balance(balance_base, "CNY")
 
-            balance_usd_conv = sum_prepay_balance_conv(filtered, "USD")
-            balance_cny_conv = sum_prepay_balance_conv(filtered, "CNY")
-            balance_all_conv = filtered['선급금잔액환산액'].sum()
+            balance_usd_conv = sum_prepay_balance_conv(balance_base, "USD")
+            balance_cny_conv = sum_prepay_balance_conv(balance_base, "CNY")
+            balance_all_conv = balance_base['선급금잔액환산액'].sum()
 
             st.markdown("#### 선급금 잔액")
-            st.caption("발주통화 기준 선급금액의 합계입니다. 잔금 정산에서 차감한 선급금은 음수로 반영됩니다.")
+            st.caption("선급금 잔액은 선택한 종료일 기준 누적 잔액입니다. 시작일과 무관하게 최초 지급일부터 종료일까지의 선급금액을 합산합니다.")
 
             b1, b2, b3, b4 = st.columns(4)
 
