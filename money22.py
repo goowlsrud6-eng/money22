@@ -1937,7 +1937,7 @@ with tabs[5]:
     def normalize_currency(val):
         cur = to_str(val).upper()
 
-        if cur in ["", "KRW", "WON", "원", "한화"]:
+        if cur in ["", "KRW", "WON", "한화"]:
             return "한화"
         if cur in ["USD", "CNY"]:
             return cur
@@ -1948,11 +1948,17 @@ with tabs[5]:
         base_type = to_str(row.get('유형'))
         currency = normalize_currency(row.get('발주통화') or row.get('통화'))
 
+        if base_type in ["제작(CNY)", "제작(USD)"]:
+            return "제작(수입)"
+
+        if base_type in ["물품대(CNY)", "물품대(USD)"]:
+            return "물품대(수입)"
+
         if base_type == "제작(수입)" and currency in ["CNY", "USD"]:
-            return f"제작({currency})"
+            return "제작(수입)"
 
         if base_type == "물품대" and currency in ["CNY", "USD"]:
-            return f"물품대({currency})"
+            return "물품대(수입)"
 
         return base_type
 
@@ -1978,6 +1984,7 @@ with tabs[5]:
             lambda r: normalize_currency(r.get('발주통화') or r.get('통화') or "한화"),
             axis=1
         )
+
         p_all['통화'] = p_all['발주통화']
 
         p_all['실제지급통화'] = p_all.apply(
@@ -2145,7 +2152,7 @@ with tabs[5]:
             min_date = p_all['dt'].min().date()
             max_date = p_all['dt'].max().date()
 
-            today = today_kst()
+            today = today_kst() if 'today_kst' in globals() else datetime.now().date()
             month_start = today.replace(day=1)
             last_month_end = month_start - timedelta(days=1)
             last_month_start = last_month_end.replace(day=1)
@@ -2195,9 +2202,15 @@ with tabs[5]:
             )
 
             filter_options = [
-                "제작(국내)", "제작(수입)", "제작(CNY)", "제작(USD)",
-                "사입", "건기식", "물품대", "물품대(CNY)", "물품대(USD)",
-                "물류비", "원단비", "기타"
+                "제작(국내)",
+                "제작(수입)",
+                "사입",
+                "건기식",
+                "물품대",
+                "물품대(수입)",
+                "물류비",
+                "원단비",
+                "기타"
             ]
             filter_options = list(dict.fromkeys(filter_options))
 
@@ -2232,16 +2245,7 @@ with tabs[5]:
                 if not selected_types:
                     return df
 
-                split_types = ["제작(CNY)", "제작(USD)", "물품대(CNY)", "물품대(USD)"]
-                mask = pd.Series(False, index=df.index)
-
-                for selected_type in selected_types:
-                    if selected_type in split_types:
-                        mask = mask | (df['정산유형'] == selected_type)
-                    else:
-                        mask = mask | (df['유형'] == selected_type)
-
-                return df[mask]
+                return df[df['정산유형'].isin(selected_types)]
 
             start_date = pd.to_datetime(start_date_input)
             end_date = pd.to_datetime(end_date_input) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
@@ -2414,26 +2418,18 @@ with tabs[5]:
             st.divider()
 
             st.subheader("📊 유형별 지급 요약")
-            st.caption("발주정산액은 발주통화 기준으로 정산에 반영되는 금액입니다. 실제지급액은 실제 돈이 나간 통화 기준입니다.")
+            st.caption("발주정산액은 발주통화 기준, 실제지급액은 실제 돈이 나간 통화 기준입니다.")
 
             same_currency_mask = (
                 filtered['발주통화'].astype(str).str.upper() ==
                 filtered['실제지급통화'].astype(str).str.upper()
             )
 
-            production_mask = (
-                filtered['정산유형'].astype(str).str.contains("제작", case=False, na=False) |
-                filtered['유형'].astype(str).str.contains("제작", case=False, na=False)
-            )
-
-            foreign_type_mask = filtered['정산유형'].astype(str).str.contains(
-                r'\((CNY|USD)\)',
-                regex=True,
-                na=False
-            )
-
+            production_mask = filtered['정산유형'].astype(str).str.contains("제작", case=False, na=False)
+            imported_goods_mask = filtered['정산유형'].astype(str).eq("물품대(수입)")
             mixed_currency_mask = ~same_currency_mask
-            special_mask = production_mask | foreign_type_mask | mixed_currency_mask
+
+            special_mask = production_mask | imported_goods_mask | mixed_currency_mask
 
             general_base = filtered[
                 (~special_mask) &
@@ -2460,8 +2456,7 @@ with tabs[5]:
                 general_summary = general_summary.rename(columns={
                     '정산유형': '유형',
                     '발주통화': '통화',
-                    '실입금액': '발주정산액',
-                    '선급금액': '선급금잔액'
+                    '실입금액': '발주정산액'
                 }).sort_values(['유형', '통화']).reset_index(drop=True)
 
                 if not general_summary.empty:
@@ -2470,7 +2465,7 @@ with tabs[5]:
                             '{:,.2f}',
                             subset=[
                                 '발주정산액',
-                                '선급금잔액',
+                                '선급금액',
                                 '실제지급액',
                                 '한화환산액'
                             ]
@@ -2499,8 +2494,7 @@ with tabs[5]:
 
                 special_summary = special_summary.rename(columns={
                     '정산유형': '유형',
-                    '실입금액': '발주정산액',
-                    '선급금액': '선급금잔액'
+                    '실입금액': '발주정산액'
                 }).sort_values(
                     ['유형', '발주통화', '실제지급통화']
                 ).reset_index(drop=True)
@@ -2511,7 +2505,7 @@ with tabs[5]:
                             '{:,.2f}',
                             subset=[
                                 '발주정산액',
-                                '선급금잔액',
+                                '선급금액',
                                 '실제지급액',
                                 '한화환산액'
                             ]
@@ -2521,7 +2515,7 @@ with tabs[5]:
                         height=min(520, 45 + len(special_summary) * 35)
                     )
 
-                    st.caption("제작/외화 정산 요약은 제작 건, 외화 유형, 발주통화와 실제지급통화가 다른 건을 함께 표시합니다.")
+                    st.caption("제작/외화 정산 요약은 제작 건, 수입 물품대, 발주통화와 실제지급통화가 다른 건을 함께 표시합니다.")
                 else:
                     st.info("제작/외화 정산 요약 내역이 없습니다.")
 
@@ -2545,28 +2539,25 @@ with tabs[5]:
                     '실입금액': '발주정산액'
                 })
 
-                vendor_summary['선급금잔액'] = vendor_summary['선급금액']
-
                 vendor_total = vendor_summary.groupby('거래처')['한화환산액'].sum().reset_index()
                 vendor_top = vendor_total.sort_values('한화환산액', ascending=False).head(20)['거래처'].tolist()
 
                 vendor_summary = vendor_summary[vendor_summary['거래처'].isin(vendor_top)].copy()
-                vendor_summary['정렬용환산액'] = vendor_summary.groupby('거래처')['한화환산액'].transform('sum')
+                vendor_summary['정렬환산액'] = vendor_summary.groupby('거래처')['한화환산액'].transform('sum')
 
                 vendor_summary = vendor_summary[[
                     '거래처',
                     '발주통화',
                     '발주정산액',
                     '선급금액',
-                    '선급금잔액',
                     '실제지급통화',
                     '실제지급액',
                     '한화환산액',
-                    '정렬용환산액'
+                    '정렬환산액'
                 ]].sort_values(
-                    ['정렬용환산액', '거래처', '발주통화', '실제지급통화'],
+                    ['정렬환산액', '거래처', '발주통화', '실제지급통화'],
                     ascending=[False, True, True, True]
-                ).drop(columns=['정렬용환산액']).reset_index(drop=True)
+                ).drop(columns=['정렬환산액']).reset_index(drop=True)
 
                 st.dataframe(
                     vendor_summary.style.format(
@@ -2574,7 +2565,6 @@ with tabs[5]:
                         subset=[
                             '발주정산액',
                             '선급금액',
-                            '선급금잔액',
                             '실제지급액',
                             '한화환산액'
                         ]
@@ -2584,7 +2574,7 @@ with tabs[5]:
                     height=min(620, 45 + len(vendor_summary) * 35)
                 )
 
-                st.caption("거래처별 지급 TOP은 한화환산액 기준 상위 20개 거래처입니다. 같은 거래처라도 발주통화와 실제지급통화 조합별로 표시됩니다.")
+                st.caption("거래처별 지급 TOP은 한화환산액 기준 상위 20개 거래처입니다. 같은 거래처라도 발주통화와 실제지급통화 조합별로 표시합니다.")
             else:
                 st.info("거래처별 지급 내역이 없습니다.")
 
