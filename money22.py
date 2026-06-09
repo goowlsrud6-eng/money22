@@ -3219,5 +3219,7 @@ with tabs[5]:
                     "기타에는 기타, 기타비용, 라벨비가 함께 포함됩니다."
                 )
 
+                st.markdown("<div style='height: 90px;'></div>", unsafe_allow_html=True)
+
     else:
         st.info("입금 내역 없음")
