@@ -2276,10 +2276,7 @@ with tabs[5]:
             if search_memo:
                 filtered = filtered[filtered['송금사유'].astype(str).str.contains(search_memo, case=False, na=False)]
 
-            balance_base = p_all[
-                p_all['dt'] <= end_date
-            ].copy()
-
+            balance_base = p_all[p_all['dt'] <= end_date].copy()
             balance_base = apply_type_filter(balance_base, filter_types)
 
             if search_vendor:
@@ -2310,7 +2307,6 @@ with tabs[5]:
             total_krw = sum_actual(filtered, "한화")
             total_usd = sum_actual(filtered, "USD")
             total_cny = sum_actual(filtered, "CNY")
-
             total_usd_conv = sum_actual_conv(filtered, "USD")
             total_cny_conv = sum_actual_conv(filtered, "CNY")
             total_all_conv = filtered['한화환산액'].sum()
@@ -2328,7 +2324,6 @@ with tabs[5]:
             prepay_krw = sum_actual(prepay_paid, "한화")
             prepay_usd = sum_actual(prepay_paid, "USD")
             prepay_cny = sum_actual(prepay_paid, "CNY")
-
             prepay_usd_conv = sum_actual_conv(prepay_paid, "USD")
             prepay_cny_conv = sum_actual_conv(prepay_paid, "CNY")
             prepay_all_conv = prepay_paid['한화환산액'].sum()
@@ -2346,7 +2341,6 @@ with tabs[5]:
             balance_krw = sum_prepay_balance(balance_base, "한화")
             balance_usd = sum_prepay_balance(balance_base, "USD")
             balance_cny = sum_prepay_balance(balance_base, "CNY")
-
             balance_usd_conv = sum_prepay_balance_conv(balance_base, "USD")
             balance_cny_conv = sum_prepay_balance_conv(balance_base, "CNY")
             balance_all_conv = balance_base['선급금잔액환산액'].sum()
@@ -2654,6 +2648,78 @@ with tabs[5]:
             if compare_base.empty:
                 st.info("전년 비교 기준 데이터가 없습니다. payment_compare_base 테이블에 2025년 월별 기준금액을 입력해 주세요.")
             else:
+                st.markdown(
+                    """
+                    <style>
+                        .compare-table-wrap {
+                            width: 100%;
+                            overflow-x: auto;
+                            border: 1px solid #e5e7eb;
+                            border-radius: 6px;
+                            margin-bottom: 18px;
+                        }
+                        .compare-table {
+                            width: 100%;
+                            border-collapse: collapse;
+                            font-size: 12px;
+                            line-height: 1.25;
+                        }
+                        .compare-table th {
+                            background-color: #f3f4f6;
+                            color: #4b5563;
+                            font-weight: 600;
+                            text-align: right;
+                            padding: 6px 6px;
+                            border-bottom: 1px solid #e5e7eb;
+                            border-right: 1px solid #e5e7eb;
+                            white-space: nowrap;
+                        }
+                        .compare-table td {
+                            text-align: right;
+                            padding: 6px 6px;
+                            border-bottom: 1px solid #e5e7eb;
+                            border-right: 1px solid #e5e7eb;
+                            white-space: nowrap;
+                        }
+                        .compare-table th:first-child,
+                        .compare-table td:first-child {
+                            text-align: left;
+                        }
+                        .compare-table th.compact-col,
+                        .compare-table td.compact-col {
+                            width: 46px;
+                            min-width: 46px;
+                            text-align: center;
+                        }
+                        .compare-table th.diff-col,
+                        .compare-table td.diff-col {
+                            width: 82px;
+                            min-width: 82px;
+                        }
+                        .compare-table th:last-child,
+                        .compare-table td:last-child {
+                            border-right: none;
+                        }
+                        .compare-table tr.total-row td {
+                            background-color: #eef6ff;
+                            font-weight: 700;
+                        }
+                        .compare-up {
+                            color: blue;
+                            font-weight: 700;
+                        }
+                        .compare-down {
+                            color: red;
+                            font-weight: 700;
+                        }
+                        .compare-empty {
+                            color: #9ca3af;
+                        }
+                    </style>
+                    """,
+                    unsafe_allow_html=True
+                )
+
                 compare_base = compare_base.copy()
 
                 for col in ['기준연도', '기준월', '기준금액']:
@@ -2692,6 +2758,15 @@ with tabs[5]:
                     end_date_only.year == current_year and
                     start_date_only.month == end_date_only.month
                 )
+
+                def escape_html_text(value):
+                    return (
+                        str(value)
+                        .replace("&", "&amp;")
+                        .replace("<", "&lt;")
+                        .replace(">", "&gt;")
+                        .replace("\n", "<br>")
+                    )
 
                 def make_compare_type_name(value):
                     v = to_str(value)
@@ -2740,29 +2815,79 @@ with tabs[5]:
                         return np.nan
                     return ((current_amount - base_amount) / base_amount) * 100
 
-                def money_fmt(v):
+                def format_money_value(v):
                     if pd.isna(v):
                         return ""
-                    return f"{v:,.0f}"
+                    return f"{float(v):,.0f}"
 
-                def percent_fmt(v):
+                def format_percent_value(v):
                     if pd.isna(v):
                         return "-"
-                    return f"{v:.0f}%"
+                    return f"{float(v):.0f}%"
 
-                def color_change_col(col):
-                    return col.map(
-                        lambda v:
-                            "color: blue; font-weight: 700;" if v == "증가"
-                            else ("color: red; font-weight: 700;" if v == "감소" else "")
-                    )
+                def render_compact_compare_table(df, money_cols=None, percent_cols=None):
+                    money_cols = set(money_cols or [])
+                    percent_cols = set(percent_cols or [])
 
-                def color_diff_col(col):
-                    return col.map(
-                        lambda v:
-                            "color: blue; font-weight: 700;" if pd.notna(v) and v > 0
-                            else ("color: red; font-weight: 700;" if pd.notna(v) and v < 0 else "")
-                    )
+                    html = '<div class="compare-table-wrap"><table class="compare-table"><thead><tr>'
+
+                    for col in df.columns:
+                        th_classes = []
+
+                        if col in ["증감률", "증감"] or "비율" in col:
+                            th_classes.append("compact-col")
+                        if col == "증감액":
+                            th_classes.append("diff-col")
+
+                        class_text = f' class="{" ".join(th_classes)}"' if th_classes else ""
+                        html += f"<th{class_text}>{escape_html_text(col)}</th>"
+
+                    html += "</tr></thead><tbody>"
+
+                    for _, row in df.iterrows():
+                        first_value = to_str(row.iloc[0])
+                        row_class = ' class="total-row"' if "총" in first_value else ""
+                        html += f"<tr{row_class}>"
+
+                        for col in df.columns:
+                            value = row[col]
+                            td_classes = []
+
+                            if col in ["증감률", "증감"] or "비율" in col:
+                                td_classes.append("compact-col")
+                            if col == "증감액":
+                                td_classes.append("diff-col")
+
+                            if pd.isna(value):
+                                display_value = "-"
+                                td_classes.append("compare-empty")
+                            elif col in money_cols:
+                                display_value = format_money_value(value)
+
+                                if col == "증감액":
+                                    if float(value) > 0:
+                                        td_classes.append("compare-up")
+                                    elif float(value) < 0:
+                                        td_classes.append("compare-down")
+                            elif col in percent_cols:
+                                display_value = format_percent_value(value)
+                            else:
+                                display_value = str(value)
+
+                                if display_value == "증가":
+                                    td_classes.append("compare-up")
+                                elif display_value == "감소":
+                                    td_classes.append("compare-down")
+                                elif display_value == "":
+                                    td_classes.append("compare-empty")
+
+                            class_text = f' class="{" ".join(td_classes)}"' if td_classes else ""
+                            html += f"<td{class_text}>{escape_html_text(display_value)}</td>"
+
+                        html += "</tr>"
+
+                    html += "</tbody></table></div>"
+                    return html
 
                 compare_base['비교유형'] = compare_base['유형'].apply(make_compare_type_name)
                 compare_base = compare_base[
@@ -2844,35 +2969,18 @@ with tabs[5]:
 
                     return pd.DataFrame(rows)
 
-                def style_compare_table(table_df, year_2025_col, year_2026_col):
-                    return (
-                        table_df.style
-                        .format({
-                            year_2025_col: money_fmt,
-                            year_2026_col: money_fmt,
-                            '증감액': money_fmt,
-                            '증감률': percent_fmt
-                        })
-                        .apply(color_diff_col, subset=['증감액'])
-                        .apply(color_change_col, subset=['증감'])
-                    )
-
                 def show_compare_table(compare_type):
                     table_df = build_type_compare_table(compare_type)
 
-                    styled_table = style_compare_table(
-                        table_df,
-                        f'{compare_year}년',
-                        f'{current_year}년'
-                    )
-
                     st.markdown(f"#### {compare_type}")
 
-                    st.dataframe(
-                        styled_table,
-                        hide_index=True,
-                        use_container_width=True,
-                        height=min(360, 45 + len(table_df) * 35)
+                    st.markdown(
+                        render_compact_compare_table(
+                            table_df,
+                            money_cols=[f'{compare_year}년', f'{current_year}년', '증감액'],
+                            percent_cols=['증감률']
+                        ),
+                        unsafe_allow_html=True
                     )
 
                 top_1, top_2, top_3 = st.columns(3)
@@ -2899,72 +3007,89 @@ with tabs[5]:
 
                 st.divider()
 
-                final_left, final_right = st.columns(2)
+                if is_single_month_filter:
+                    target_month = end_date_only.month
+                else:
+                    target_month = compare_end_month
 
-                with final_left:
-                    st.markdown("#### 총입금내역")
+                prev_month = target_month - 1
 
-                    def build_total_compare_table():
-                        base_monthly = compare_base.groupby('기준월')['기준금액'].sum()
-                        current_monthly_all = current_monthly.groupby('비교월')['한화환산액'].sum()
+                final_1, final_2, final_3 = st.columns([1, 1.15, 1])
 
-                        rows = []
+                with final_1:
+                    if prev_month < 1:
+                        st.markdown("#### 전월 대비")
+                        st.info("1월은 전월 대비 비교할 이전월이 없습니다.")
+                    else:
+                        st.markdown(f"#### 전월 대비 ({prev_month}월 → {target_month}월)")
 
-                        for month in compare_months:
-                            base_amount = float(base_monthly.get(month, 0))
-                            current_amount = float(current_monthly_all.get(month, 0))
-                            diff_amount = current_amount - base_amount
-                            change_rate = calc_change_rate(base_amount, current_amount)
+                        def build_prev_month_compare_table(prev_month, target_month):
+                            prev_type_month = current_monthly[
+                                current_monthly['비교월'] == prev_month
+                            ].groupby('비교유형')['한화환산액'].sum()
+
+                            target_type_month = current_monthly[
+                                current_monthly['비교월'] == target_month
+                            ].groupby('비교유형')['한화환산액'].sum()
+
+                            compare_types = ["사입", "제작", "물류비", "물품대", "건기식", "기타"]
+                            rows = []
+
+                            for compare_type in compare_types:
+                                prev_amount = float(prev_type_month.get(compare_type, 0))
+                                target_amount = float(target_type_month.get(compare_type, 0))
+                                diff_amount = target_amount - prev_amount
+                                change_rate = calc_change_rate(prev_amount, target_amount)
+
+                                rows.append({
+                                    '구분': compare_type,
+                                    f'{current_year}년 {prev_month}월': prev_amount,
+                                    f'{current_year}년 {target_month}월': target_amount,
+                                    '증감액': diff_amount,
+                                    '증감률': change_rate,
+                                    '증감': make_change_label(diff_amount)
+                                })
+
+                            total_prev = sum(row[f'{current_year}년 {prev_month}월'] for row in rows)
+                            total_target = sum(row[f'{current_year}년 {target_month}월'] for row in rows)
+                            total_diff = total_target - total_prev
+                            total_rate = calc_change_rate(total_prev, total_target)
 
                             rows.append({
-                                '월/유형': f"{month}월",
-                                f'총 입금액 ({compare_year}년)': base_amount,
-                                f'총 입금액 ({current_year}년)': current_amount,
-                                '증감액': diff_amount,
-                                '증감률': change_rate,
-                                '증감': make_change_label(diff_amount)
+                                '구분': '총 합계',
+                                f'{current_year}년 {prev_month}월': total_prev,
+                                f'{current_year}년 {target_month}월': total_target,
+                                '증감액': total_diff,
+                                '증감률': total_rate,
+                                '증감': make_change_label(total_diff)
                             })
 
-                        total_base = sum(row[f'총 입금액 ({compare_year}년)'] for row in rows)
-                        total_current = sum(row[f'총 입금액 ({current_year}년)'] for row in rows)
-                        total_diff = total_current - total_base
-                        total_rate = calc_change_rate(total_base, total_current)
+                            return pd.DataFrame(rows)
 
-                        rows.append({
-                            '월/유형': f"총합계\n(1~{compare_end_month}월)",
-                            f'총 입금액 ({compare_year}년)': total_base,
-                            f'총 입금액 ({current_year}년)': total_current,
-                            '증감액': total_diff,
-                            '증감률': total_rate,
-                            '증감': make_change_label(total_diff)
-                        })
+                        prev_compare_df = build_prev_month_compare_table(prev_month, target_month)
 
-                        return pd.DataFrame(rows)
+                        st.markdown(
+                            render_compact_compare_table(
+                                prev_compare_df,
+                                money_cols=[
+                                    f'{current_year}년 {prev_month}월',
+                                    f'{current_year}년 {target_month}월',
+                                    '증감액'
+                                ],
+                                percent_cols=['증감률']
+                            ),
+                            unsafe_allow_html=True
+                        )
 
-                    total_compare_df = build_total_compare_table()
-
-                    styled_total_compare = style_compare_table(
-                        total_compare_df,
-                        f'총 입금액 ({compare_year}년)',
-                        f'총 입금액 ({current_year}년)'
-                    )
-
-                    st.dataframe(
-                        styled_total_compare,
-                        hide_index=True,
-                        use_container_width=True,
-                        height=min(420, 45 + len(total_compare_df) * 35)
-                    )
-
-                with final_right:
+                with final_2:
                     if is_single_month_filter:
                         target_months = [end_date_only.month]
-                        month_compare_title = f"{compare_year}년~{current_year}년 {end_date_only.month}월 입금 비교"
+                        period_compare_title = f"전년 동월 대비 ({end_date_only.month}월)"
                     else:
                         target_months = compare_months
-                        month_compare_title = f"{compare_year}년 vs {current_year}년 1월-{compare_end_month}월 누계 입금 비교"
+                        period_compare_title = f"전년 누계 대비 (1~{compare_end_month}월)"
 
-                    st.markdown(f"#### {month_compare_title}")
+                    st.markdown(f"#### {period_compare_title}")
 
                     def build_period_type_compare_table(target_months):
                         base_type_period = compare_base[
@@ -3020,25 +3145,72 @@ with tabs[5]:
 
                     period_compare_df = build_period_type_compare_table(target_months)
 
-                    styled_period_compare = (
-                        period_compare_df.style
-                        .format({
-                            f'{compare_year}년 금액': money_fmt,
-                            f'{compare_year}년 비율': percent_fmt,
-                            f'{current_year}년 금액': money_fmt,
-                            f'{current_year}년 비율': percent_fmt,
-                            '증감액': money_fmt,
-                            '증감률': percent_fmt
-                        })
-                        .apply(color_diff_col, subset=['증감액'])
-                        .apply(color_change_col, subset=['증감'])
+                    st.markdown(
+                        render_compact_compare_table(
+                            period_compare_df,
+                            money_cols=[
+                                f'{compare_year}년 금액',
+                                f'{current_year}년 금액',
+                                '증감액'
+                            ],
+                            percent_cols=[
+                                f'{compare_year}년 비율',
+                                f'{current_year}년 비율',
+                                '증감률'
+                            ]
+                        ),
+                        unsafe_allow_html=True
                     )
 
-                    st.dataframe(
-                        styled_period_compare,
-                        hide_index=True,
-                        use_container_width=True,
-                        height=min(420, 45 + len(period_compare_df) * 35)
+                with final_3:
+                    st.markdown("#### 총입금내역")
+
+                    def build_total_compare_table():
+                        base_monthly = compare_base.groupby('기준월')['기준금액'].sum()
+                        current_monthly_all = current_monthly.groupby('비교월')['한화환산액'].sum()
+
+                        rows = []
+
+                        for month in compare_months:
+                            base_amount = float(base_monthly.get(month, 0))
+                            current_amount = float(current_monthly_all.get(month, 0))
+                            diff_amount = current_amount - base_amount
+                            change_rate = calc_change_rate(base_amount, current_amount)
+
+                            rows.append({
+                                '월/유형': f"{month}월",
+                                f'{compare_year}년': base_amount,
+                                f'{current_year}년': current_amount,
+                                '증감액': diff_amount,
+                                '증감률': change_rate,
+                                '증감': make_change_label(diff_amount)
+                            })
+
+                        total_base = sum(row[f'{compare_year}년'] for row in rows)
+                        total_current = sum(row[f'{current_year}년'] for row in rows)
+                        total_diff = total_current - total_base
+                        total_rate = calc_change_rate(total_base, total_current)
+
+                        rows.append({
+                            '월/유형': f"총합계\n(1~{compare_end_month}월)",
+                            f'{compare_year}년': total_base,
+                            f'{current_year}년': total_current,
+                            '증감액': total_diff,
+                            '증감률': total_rate,
+                            '증감': make_change_label(total_diff)
+                        })
+
+                        return pd.DataFrame(rows)
+
+                    total_compare_df = build_total_compare_table()
+
+                    st.markdown(
+                        render_compact_compare_table(
+                            total_compare_df,
+                            money_cols=[f'{compare_year}년', f'{current_year}년', '증감액'],
+                            percent_cols=['증감률']
+                        ),
+                        unsafe_allow_html=True
                     )
 
                 st.caption(
