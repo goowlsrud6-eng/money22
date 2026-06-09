@@ -2962,7 +2962,7 @@ with tabs[5]:
                         month_compare_title = f"{compare_year}년~{current_year}년 {end_date_only.month}월 입금 비교"
                     else:
                         target_months = compare_months
-                        month_compare_title = f"{compare_year}년~{current_year}년 1~{compare_end_month}월 누계 입금 비교"
+                        month_compare_title = f"{compare_year}년 vs {current_year}년 1월-{compare_end_month}월 누계 입금 비교"
 
                     st.markdown(f"#### {month_compare_title}")
 
