@@ -3005,7 +3005,6 @@ with tabs[5]:
                 with bottom_3:
                     show_compare_table("기타")
 
-                st.divider()
 
                 if is_single_month_filter:
                     target_month = end_date_only.month
