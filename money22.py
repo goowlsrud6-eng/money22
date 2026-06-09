@@ -1595,6 +1595,7 @@ with tabs[4]:
         try:
             df_ex = pd.read_csv(u)
             df_ex.columns = [c.strip() for c in df_ex.columns]
+
             data_list = []
 
             for _, r in df_ex.iterrows():
@@ -1612,12 +1613,14 @@ with tabs[4]:
 
     with up_c1:
         u_u = st.file_uploader("USD CSV 업로드", type=['csv'], key="usd_up")
+
         if u_u and st.button("USD 데이터 동기화", use_container_width=True):
             up_ex(u_u, "USD")
             st.rerun()
 
     with up_c2:
         u_c = st.file_uploader("CNY CSV 업로드", type=['csv'], key="cny_up")
+
         if u_c and st.button("CNY 데이터 동기화", use_container_width=True):
             up_ex(u_c, "CNY")
             st.rerun()
@@ -1636,7 +1639,7 @@ with tabs[4]:
         ex_db['연도'] = ex_db['날짜'].dt.year
         ex_db['월'] = ex_db['날짜'].dt.month
 
-        df_target = ex_db[ex_db['연도'].isin([2025, 2026])]
+        df_target = ex_db[ex_db['연도'].isin([2025, 2026])].copy()
 
         main_l, main_r = st.columns(2, gap="large")
 
@@ -1663,21 +1666,34 @@ with tabs[4]:
                         x=chart_df['날짜'],
                         y=chart_df[curr],
                         mode='lines',
-                        line=dict(color='blue' if curr == 'usd' else 'red', width=2)
+                        line=dict(
+                            color='blue' if curr == 'usd' else 'red',
+                            width=2
+                        )
                     ))
+
                     fig.update_layout(
                         height=250,
                         margin=dict(l=0, r=0, t=10, b=0),
                         showlegend=False,
                         hovermode="x unified"
                     )
+
                     st.plotly_chart(fig, use_container_width=True)
 
                 # -------------------------------
                 # 📊 월별 분석
                 # -------------------------------
-                df_target[curr] = pd.to_numeric(df_target[curr], errors='coerce')
-                m_avg = df_target.dropna(subset=[curr]).groupby(['연도', '월'])[curr].mean().reset_index()
+                curr_target = df_target.copy()
+                curr_target[curr] = pd.to_numeric(curr_target[curr], errors='coerce')
+
+                m_avg = (
+                    curr_target
+                    .dropna(subset=[curr])
+                    .groupby(['연도', '월'])[curr]
+                    .mean()
+                    .reset_index()
+                )
 
                 if not m_avg.empty:
 
@@ -1696,6 +1712,9 @@ with tabs[4]:
                         if v == "감소":
                             return "color: red; font-weight: 600;"
                         return ""
+
+                    def color_change_columns(col):
+                        return col.map(color_change_text)
 
                     def percent_fmt(v):
                         if pd.isna(v):
@@ -1719,8 +1738,13 @@ with tabs[4]:
                         m_avg_sorted['전월값'].replace(0, np.nan)
                     ) * 100
 
-                    # pivot 생성
-                    pivot = m_avg_sorted.pivot(index='월', columns='연도', values=curr)
+                    # 연도별 월 평균 pivot
+                    pivot = m_avg_sorted.pivot(
+                        index='월',
+                        columns='연도',
+                        values=curr
+                    )
+
                     pivot.columns = [f"{int(c)}년" for c in pivot.columns]
 
                     c25, c26 = "2025년", "2026년"
@@ -1732,11 +1756,14 @@ with tabs[4]:
                             pivot[c25].replace(0, np.nan)
                         ) * 100
 
-                    # index → 월 컬럼
+                    # 월을 컬럼으로 이동
                     pivot = pivot.reset_index()
 
-                    # 전월대비 merge
-                    prev_df = m_avg_sorted[m_avg_sorted['연도'] == 2026][['월', '지난달대비(%)']]
+                    # 2026년 기준 지난달 대비 붙이기
+                    prev_df = m_avg_sorted[
+                        m_avg_sorted['연도'] == 2026
+                    ][['월', '지난달대비(%)']]
+
                     pivot = pivot.merge(prev_df, on='월', how='left')
 
                     if '전년동월대비(%)' not in pivot.columns:
@@ -1779,13 +1806,17 @@ with tabs[4]:
                     if c26 in pivot.columns:
                         format_map[c26] = number_fmt
 
-                    st.dataframe(
+                    styled_pivot = (
                         pivot.style
-                            .format(format_map)
-                            .applymap(
-                                color_change_text,
-                                subset=['전년동월 증감', '지난달 증감']
-                            ),
+                        .format(format_map)
+                        .apply(
+                            color_change_columns,
+                            subset=['전년동월 증감', '지난달 증감']
+                        )
+                    )
+
+                    st.dataframe(
+                        styled_pivot,
                         hide_index=True,
                         use_container_width=True
                     )
@@ -1817,15 +1848,19 @@ with tabs[4]:
 
             if st.button("💾 수정 내용 저장", use_container_width=True):
                 try:
-                    upsert_supabase_data("exchange_rates", edited_ex.to_dict(orient='records'))
+                    upsert_supabase_data(
+                        "exchange_rates",
+                        edited_ex.to_dict(orient='records')
+                    )
                     st.success("저장 완료!")
                     st.rerun()
+
                 except Exception as e:
                     st.error(f"저장 실패: {e}")
 
     else:
         st.info("환율 데이터를 업로드해 주세요.")
-
+        
 # --- [Tab 5] 입금 요약 ---
 with tabs[5]:
     st.header("📊 입금 요약")
