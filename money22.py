@@ -832,6 +832,16 @@ with tabs[2]:
     o_all = get_supabase_data("orders")
     ex_rates = get_supabase_data("exchange_rates")
 
+    def normalize_currency(val):
+        cur = to_str(val).upper()
+
+        if cur in ["", "KRW", "WON", "한화"]:
+            return "한화"
+        if cur in ["USD", "CNY"]:
+            return cur
+
+        return cur
+
     if not p_all.empty:
         if '삭제' not in p_all.columns:
             p_all['삭제'] = False
@@ -845,19 +855,22 @@ with tabs[2]:
                 p_all[col] = 0
             p_all[col] = pd.to_numeric(p_all[col], errors='coerce').fillna(0)
 
-        for col in ['발주번호', '거래처명', '상품명', '유형', '통화', '발주통화', '실제지급통화', '메모']:
+        for col in [
+            '발주번호', '발주차수', '거래처명', '상품명', '유형',
+            '통화', '발주통화', '실제지급통화', '메모'
+        ]:
             if col not in p_all.columns:
                 p_all[col] = ""
             p_all[col] = p_all[col].apply(to_str)
 
         p_all['발주통화'] = p_all.apply(
-            lambda r: to_str(r.get('발주통화')) or to_str(r.get('통화')) or "한화",
+            lambda r: normalize_currency(r.get('발주통화') or r.get('통화') or "한화"),
             axis=1
         )
         p_all['통화'] = p_all['발주통화']
 
         p_all['실제지급통화'] = p_all.apply(
-            lambda r: to_str(r.get('실제지급통화')) or to_str(r.get('발주통화')) or "한화",
+            lambda r: normalize_currency(r.get('실제지급통화') or r.get('발주통화') or "한화"),
             axis=1
         )
 
@@ -879,7 +892,6 @@ with tabs[2]:
 
         p_all['지급환율'] = pd.to_numeric(p_all['지급환율'], errors='coerce')
 
-        rate_base_amount = default_actual_amount.copy()
         same_currency_mask = (
             p_all['발주통화'].astype(str).str.upper() ==
             p_all['실제지급통화'].astype(str).str.upper()
@@ -891,12 +903,12 @@ with tabs[2]:
         calc_rate_mask = (
             missing_rate_mask &
             ~same_currency_mask &
-            (rate_base_amount != 0)
+            (default_actual_amount != 0)
         )
 
         p_all.loc[calc_rate_mask, '지급환율'] = (
             p_all.loc[calc_rate_mask, '실제지급액'] /
-            rate_base_amount.loc[calc_rate_mask]
+            default_actual_amount.loc[calc_rate_mask]
         )
 
         p_all['지급환율'] = pd.to_numeric(p_all['지급환율'], errors='coerce').fillna(0)
@@ -913,7 +925,7 @@ with tabs[2]:
 
             o_all['발주총액'] = pd.to_numeric(o_all['발주총액'], errors='coerce').fillna(0)
             o_all['마감여부'] = pd.to_numeric(o_all['마감여부'], errors='coerce').fillna(0).astype(int)
-            o_all['발주통화'] = o_all['통화'].apply(lambda x: to_str(x) or "한화")
+            o_all['발주통화'] = o_all['통화'].apply(normalize_currency)
 
             ref_dict = o_all.set_index('발주번호')[
                 ['거래처명', '상품명', '유형', '발주차수', '마감여부', '발주통화']
@@ -950,13 +962,19 @@ with tabs[2]:
 
         def make_settle_type(row):
             base_type = to_str(row.get('유형'))
-            currency = to_str(row.get('발주통화') or row.get('통화')).upper()
+            currency = normalize_currency(row.get('발주통화') or row.get('통화'))
+
+            if base_type in ["제작(CNY)", "제작(USD)"]:
+                return "제작(수입)"
+
+            if base_type in ["물품대(CNY)", "물품대(USD)"]:
+                return "물품대(수입)"
 
             if base_type == "제작(수입)" and currency in ["CNY", "USD"]:
-                return f"제작({currency})"
+                return "제작(수입)"
 
             if base_type == "물품대" and currency in ["CNY", "USD"]:
-                return f"물품대({currency})"
+                return "물품대(수입)"
 
             return base_type
 
@@ -979,7 +997,7 @@ with tabs[2]:
             min_date = p_all['dt'].min().date()
             max_date = p_all['dt'].max().date()
 
-            today = today_kst()
+            today = today_kst() if 'today_kst' in globals() else datetime.now().date()
             month_start = today.replace(day=1)
             last_month_end = month_start - timedelta(days=1)
             last_month_start = last_month_end.replace(day=1)
@@ -1018,26 +1036,49 @@ with tabs[2]:
 
             f1, f2, f3, f4, f5, f6 = st.columns([0.8, 0.8, 1.5, 1.1, 1.1, 1.1])
 
-            start_date_input = f1.date_input("시작일", key="detail_start_date")
-            end_date_input = f2.date_input("종료일", key="detail_end_date")
+            start_date_input = f1.date_input(
+                "시작일",
+                key="detail_start_date"
+            )
+
+            end_date_input = f2.date_input(
+                "종료일",
+                key="detail_end_date"
+            )
 
             filter_options = [
-                "전체 유형"
-            ] + CATEGORIES + [
-                "제작(CNY)", "제작(USD)",
-                "물품대(CNY)", "물품대(USD)"
+                "제작(국내)",
+                "제작(수입)",
+                "사입",
+                "건기식",
+                "물품대",
+                "물품대(수입)",
+                "물류비",
+                "원단비",
+                "기타"
             ]
             filter_options = list(dict.fromkeys(filter_options))
 
             filter_cats = f3.multiselect(
                 "유형 필터",
-                [x for x in filter_options if x != "전체 유형"],
+                filter_options,
                 key=f"detail_filter_cat_{search_reset_key}"
             )
 
-            search_vendor = f4.text_input("업체 검색", key=f"detail_search_vendor_{search_reset_key}")
-            search_product = f5.text_input("상품 검색", key=f"detail_search_product_{search_reset_key}")
-            search_order = f6.text_input("발주차수 검색", key=f"detail_search_order_{search_reset_key}")
+            search_vendor = f4.text_input(
+                "업체 검색",
+                key=f"detail_search_vendor_{search_reset_key}"
+            )
+
+            search_product = f5.text_input(
+                "상품 검색",
+                key=f"detail_search_product_{search_reset_key}"
+            )
+
+            search_order = f6.text_input(
+                "발주차수 검색",
+                key=f"detail_search_order_{search_reset_key}"
+            )
 
             o1, o2, o3 = st.columns([1.1, 1.1, 5.8])
 
@@ -1058,16 +1099,7 @@ with tabs[2]:
                 if not selected_types:
                     return df
 
-                split_types = ["제작(CNY)", "제작(USD)", "물품대(CNY)", "물품대(USD)"]
-                mask = pd.Series(False, index=df.index)
-
-                for selected_type in selected_types:
-                    if selected_type in split_types:
-                        mask = mask | (df['정산유형'] == selected_type)
-                    else:
-                        mask = mask | (df['유형'] == selected_type)
-
-                return df[mask]
+                return df[df['정산유형'].isin(selected_types)]
 
             start_date = pd.to_datetime(start_date_input)
             end_date = pd.to_datetime(end_date_input) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
@@ -1107,9 +1139,9 @@ with tabs[2]:
             def get_actual_conv(row):
                 try:
                     amount = float(row.get('실제지급액', 0))
-                    currency = to_str(row.get('실제지급통화')).upper()
+                    currency = normalize_currency(row.get('실제지급통화'))
 
-                    if currency in ["한화", "KRW", ""]:
+                    if currency == "한화":
                         return amount
 
                     ym = str(row.get('입금일'))[:7]
@@ -1398,8 +1430,6 @@ with tabs[2]:
 
                             if "발주정산액" in changes:
                                 up_data["실입금액"] = round(to_float(changes["발주정산액"]), 2)
-                            if "실입금액" in changes:
-                                up_data["실입금액"] = round(to_float(changes["실입금액"]), 2)
                             if "선급금액" in changes:
                                 up_data["선급금액"] = round(to_float(changes["선급금액"]), 2)
                             if "실제지급액" in changes:
