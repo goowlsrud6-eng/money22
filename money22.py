@@ -1609,6 +1609,112 @@ with tabs[4]:
         except Exception as e:
             st.error(f"업로드 에러: {e}")
 
+    def escape_html_text(value):
+        return (
+            str(value)
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+        )
+
+    def render_center_table(df):
+        table_style = """
+        <style>
+            .exchange-table-wrap {
+                width: 100%;
+                overflow-x: auto;
+                border: 1px solid #e5e7eb;
+                border-radius: 6px;
+                margin-top: 6px;
+            }
+            .exchange-table {
+                width: 100%;
+                border-collapse: collapse;
+                font-size: 14px;
+            }
+            .exchange-table th {
+                background-color: #f3f4f6;
+                color: #374151;
+                font-weight: 600;
+                text-align: center;
+                padding: 9px 10px;
+                border-bottom: 1px solid #e5e7eb;
+                border-right: 1px solid #e5e7eb;
+                white-space: nowrap;
+            }
+            .exchange-table td {
+                text-align: center;
+                padding: 9px 10px;
+                border-bottom: 1px solid #e5e7eb;
+                border-right: 1px solid #e5e7eb;
+                white-space: nowrap;
+            }
+            .exchange-table th:last-child,
+            .exchange-table td:last-child {
+                border-right: none;
+            }
+            .exchange-up {
+                color: blue;
+                font-weight: 700;
+            }
+            .exchange-down {
+                color: red;
+                font-weight: 700;
+            }
+            .exchange-empty {
+                color: #9ca3af;
+            }
+        </style>
+        """
+
+        html = table_style
+        html += '<div class="exchange-table-wrap">'
+        html += '<table class="exchange-table">'
+        html += '<thead><tr>'
+
+        for col in df.columns:
+            html += f"<th>{escape_html_text(col)}</th>"
+
+        html += '</tr></thead><tbody>'
+
+        for _, row in df.iterrows():
+            html += "<tr>"
+
+            for col in df.columns:
+                value = row[col]
+                cell_class = ""
+
+                if pd.isna(value):
+                    display_value = ""
+                    cell_class = "exchange-empty"
+
+                elif col == "월":
+                    display_value = f"{int(value)}"
+
+                elif col in ["2025년", "2026년"]:
+                    display_value = f"{float(value):,.2f}"
+
+                elif col in ["전년동월대비(%)", "지난달대비(%)"]:
+                    display_value = f"{float(value):.2f}%"
+
+                else:
+                    display_value = str(value)
+
+                    if display_value == "증가":
+                        cell_class = "exchange-up"
+                    elif display_value == "감소":
+                        cell_class = "exchange-down"
+                    elif display_value == "":
+                        cell_class = "exchange-empty"
+
+                html += f'<td class="{cell_class}">{escape_html_text(display_value)}</td>'
+
+            html += "</tr>"
+
+        html += "</tbody></table></div>"
+
+        return html
+
     up_c1, up_c2 = st.columns(2)
 
     with up_c1:
@@ -1706,26 +1812,6 @@ with tabs[4]:
                             return "감소"
                         return "-"
 
-                    def color_change_text(v):
-                        if v == "증가":
-                            return "color: blue; font-weight: 600;"
-                        if v == "감소":
-                            return "color: red; font-weight: 600;"
-                        return ""
-
-                    def color_change_columns(col):
-                        return col.map(color_change_text)
-
-                    def percent_fmt(v):
-                        if pd.isna(v):
-                            return ""
-                        return f"{v:.2f}%"
-
-                    def number_fmt(v):
-                        if pd.isna(v):
-                            return ""
-                        return f"{v:,.2f}"
-
                     # 전체 시계열 정렬
                     m_avg_sorted = m_avg.sort_values(['연도', '월']).copy()
 
@@ -1793,33 +1879,7 @@ with tabs[4]:
                     pivot = pivot[cols]
 
                     st.write(f"**{curr.upper()} 월별 환율 추이 분석**")
-
-                    format_map = {
-                        '월': '{}',
-                        '전년동월대비(%)': percent_fmt,
-                        '지난달대비(%)': percent_fmt,
-                    }
-
-                    if c25 in pivot.columns:
-                        format_map[c25] = number_fmt
-
-                    if c26 in pivot.columns:
-                        format_map[c26] = number_fmt
-
-                    styled_pivot = (
-                        pivot.style
-                        .format(format_map)
-                        .apply(
-                            color_change_columns,
-                            subset=['전년동월 증감', '지난달 증감']
-                        )
-                    )
-
-                    st.dataframe(
-                        styled_pivot,
-                        hide_index=True,
-                        use_container_width=True
-                    )
+                    st.markdown(render_center_table(pivot), unsafe_allow_html=True)
 
                 else:
                     st.info(f"{curr.upper()} 데이터 부족")
