@@ -1523,6 +1523,7 @@ with tabs[3]:
     
     # 1. 데이터 로드 및 정렬
     v_orig = get_supabase_data("vendors")
+
     if not v_orig.empty:
         v_orig = v_orig.sort_values('거래처명').reset_index(drop=True)
     
@@ -1531,12 +1532,15 @@ with tabs[3]:
     # --- 상단: 등록 섹션 ---
     with col_v_in:
         st.subheader("1. 신규 거래처 수기 등록")
+
         with st.form("new_v_form_full", clear_on_submit=True):
             v_c1, v_c2 = st.columns([2, 1])
+
             vn = v_c1.text_input("거래처명 (필수)")
             vt = v_c2.selectbox("기본 유형", CATEGORIES)
             
             v_c3, v_c4, v_c5 = st.columns([1, 2, 1])
+
             vb = v_c3.text_input("은행")
             va = v_c4.text_input("계좌번호")
             vh = v_c5.text_input("예금주")
@@ -1544,76 +1548,190 @@ with tabs[3]:
             if st.form_submit_button("➕ 거래처 정보 저장", use_container_width=True):
                 if vn:
                     upsert_supabase_data("vendors", {
-                        "거래처명": vn, "기본유형": vt, "은행": vb, "계좌번호": va, "예금주": vh
+                        "거래처명": vn,
+                        "기본유형": vt,
+                        "은행": vb,
+                        "계좌번호": va,
+                        "예금주": vh
                     })
-                    st.success(f"✅ [{vn}] 등록 완료!"); st.rerun()
+
+                    st.success(f"✅ [{vn}] 등록 완료!")
+                    st.rerun()
+
                 else:
                     st.error("⚠️ 거래처명은 필수 입력 항목입니다.")
 
     with col_v_csv:
         st.subheader("2. CSV 일괄 등록")
-        v_template = pd.DataFrame(columns=["거래처명", "기본유형", "은행", "계좌번호", "예금주"])
-        st.download_button("📥 등록 양식(CSV) 다운로드", v_template.to_csv(index=False).encode('utf-8-sig'), "vendor_template.csv", use_container_width=True)
+
+        v_template = pd.DataFrame(columns=[
+            "거래처명", "기본유형", "은행", "계좌번호", "예금주"
+        ])
+
+        st.download_button(
+            "📥 등록 양식(CSV) 다운로드",
+            v_template.to_csv(index=False).encode('utf-8-sig'),
+            "vendor_template.csv",
+            use_container_width=True
+        )
+
         up_vendor = st.file_uploader("파일 선택", type=['csv'], key="v_up_file")
+
         if up_vendor and st.button("🚀 일괄 저장 실행", use_container_width=True):
             try:
                 df_v_up = pd.read_csv(up_vendor)
-                df_v_up.columns = [str(c).strip().replace('\ufeff', '') for c in df_v_up.columns]
-                v_list = [r.to_dict() for _, r in df_v_up.iterrows() if to_str(r.get('거래처명'))]
+                df_v_up.columns = [
+                    str(c).strip().replace('\ufeff', '')
+                    for c in df_v_up.columns
+                ]
+
+                v_list = [
+                    r.to_dict()
+                    for _, r in df_v_up.iterrows()
+                    if to_str(r.get('거래처명'))
+                ]
+
                 if v_list:
                     upsert_supabase_data("vendors", v_list)
-                    st.success(f"✨ {len(v_list)}건 등록 완료!"); st.rerun()
+                    st.success(f"✨ {len(v_list)}건 등록 완료!")
+                    st.rerun()
+
             except Exception as e:
                 st.error(f"❌ 오류: {e}")
 
     st.divider()
 
-    # --- 하단: 목록 수정 및 검색 (표 크기 최적화 핵심) ---
+    # --- 하단: 목록 수정/검색/삭제 ---
     if not v_orig.empty:
         st.subheader("📋 등록된 거래처 목록")
         
-        v_search = st.text_input("🔍 거래처 검색 (이름 또는 은행)", placeholder="찾으시는 거래처명을 입력하세요...")
+        v_search = st.text_input(
+            "🔍 거래처 검색 (이름 또는 은행)",
+            placeholder="찾으시는 거래처명을 입력하세요..."
+        )
         
         display_v = v_orig.copy()
-        if v_search:
-            display_v = display_v[display_v['거래처명'].str.contains(v_search, case=False, na=False) | 
-                                  display_v['은행'].str.contains(v_search, case=False, na=False)]
 
-        # ✅ [UI 최적화] 데이터 양에 따른 가변 높이 설정
-        # 헤더(약 40px) + 행당(약 35px). 최대 600px까지만 확장
+        if v_search:
+            display_v = display_v[
+                display_v['거래처명'].astype(str).str.contains(v_search, case=False, na=False) |
+                display_v['은행'].astype(str).str.contains(v_search, case=False, na=False)
+            ]
+
+        display_v = display_v.copy()
+        display_v['삭제'] = False
+
+        # 헤더(약 45px) + 행당(약 37px), 최대 600px
         v_height = min(600, 45 + len(display_v) * 37)
 
         ev_v = st.data_editor(
-            display_v, 
-            hide_index=True, 
+            display_v,
+            hide_index=True,
             use_container_width=True,
-            height=v_height,  # 🔥 표가 너무 커지지 않게 자동 조절
-            key="vendor_editor_v2",
+            height=v_height,
+            key="vendor_editor_v3",
             column_config={
-                "거래처명": st.column_config.TextColumn("거래처명", width="medium"), # width 오타 수정
+                "삭제": st.column_config.CheckboxColumn("삭제", width="small"),
+                "거래처명": st.column_config.TextColumn("거래처명", width="medium"),
                 "기본유형": st.column_config.SelectboxColumn("기본 유형", options=CATEGORIES, width="small"),
                 "은행": st.column_config.TextColumn("은행", width="small"),
-                "계좌번호": st.column_config.TextColumn("계좌번호", width="medium"), # width 오타 수정
+                "계좌번호": st.column_config.TextColumn("계좌번호", width="medium"),
                 "예금주": st.column_config.TextColumn("예금주", width="small"),
             }
         )
+
+        def clean_vendor_id(value):
+            try:
+                if value is None or pd.isna(value):
+                    return None
+
+                if isinstance(value, (int, np.integer)):
+                    return int(value)
+
+                if isinstance(value, float) and value.is_integer():
+                    return int(value)
+
+                return value
+
+            except:
+                return value
+
+        btn_save, btn_delete = st.columns(2)
         
-        if st.button("💾 변경사항 동기화 저장", use_container_width=True):
-            for i, r in ev_v.iterrows():
-                target_id = r.get('id')
-                if target_id:
-                    old_row = v_orig[v_orig['id'] == target_id]
-                    if not old_row.empty and old_row.iloc[0]['거래처명'] != r['거래처명']:
-                        old_n = old_row.iloc[0]['거래처명']
-                        # 연관 테이블(payments, orders) 동기화
-                        supabase.table("payments").update({"거래처명": r['거래처명'], "유형": r['기본유형']}).eq("거래처명", old_n).execute()
-                        supabase.table("orders").update({"거래처명": r['거래처명'], "유형": r['기본유형']}).eq("거래처명", old_n).execute()
-            
-            upsert_supabase_data("vendors", ev_v.to_dict(orient='records'))
-            st.success("✅ 동기화 완료!"); st.rerun()
+        with btn_save:
+            if st.button("💾 변경사항 동기화 저장", use_container_width=True):
+                try:
+                    final_save = ev_v.drop(columns=['삭제'], errors='ignore')
+
+                    for _, r in final_save.iterrows():
+                        target_id = clean_vendor_id(r.get('id'))
+
+                        if target_id is not None and 'id' in v_orig.columns:
+                            old_row = v_orig[v_orig['id'] == target_id]
+
+                            if not old_row.empty and old_row.iloc[0]['거래처명'] != r['거래처명']:
+                                old_n = old_row.iloc[0]['거래처명']
+
+                                # 연관 테이블(payments, orders) 동기화
+                                supabase.table("payments") \
+                                    .update({
+                                        "거래처명": r['거래처명'],
+                                        "유형": r['기본유형']
+                                    }) \
+                                    .eq("거래처명", old_n) \
+                                    .execute()
+
+                                supabase.table("orders") \
+                                    .update({
+                                        "거래처명": r['거래처명'],
+                                        "유형": r['기본유형']
+                                    }) \
+                                    .eq("거래처명", old_n) \
+                                    .execute()
+                    
+                    upsert_supabase_data(
+                        "vendors",
+                        final_save.to_dict(orient='records')
+                    )
+
+                    st.success("✅ 동기화 완료!")
+                    st.rerun()
+
+                except Exception as e:
+                    st.error(f"저장 실패: {e}")
+
+        with btn_delete:
+            if st.button("🗑️ 선택 삭제", use_container_width=True):
+                try:
+                    delete_list = ev_v[ev_v['삭제'] == True].copy()
+
+                    if delete_list.empty:
+                        st.info("삭제할 거래처를 선택하세요.")
+
+                    else:
+                        for _, r in delete_list.iterrows():
+                            target_id = clean_vendor_id(r.get('id'))
+
+                            if target_id is not None and 'id' in ev_v.columns:
+                                supabase.table("vendors") \
+                                    .delete() \
+                                    .eq("id", target_id) \
+                                    .execute()
+
+                            else:
+                                supabase.table("vendors") \
+                                    .delete() \
+                                    .eq("거래처명", str(r['거래처명']).strip()) \
+                                    .execute()
+
+                        st.success(f"🗑️ 선택한 거래처 삭제 완료: {len(delete_list)}건")
+                        st.rerun()
+
+                except Exception as e:
+                    st.error(f"삭제 실패: {e}")
+
     else:
         st.info("📢 등록된 거래처 정보가 없습니다.")
-
 # --- [Tab 4] 환율 분석 ---
 with tabs[4]:
     st.header("📈 환율 데이터 분석 및 관리")
