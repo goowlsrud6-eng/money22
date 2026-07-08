@@ -170,6 +170,47 @@ def today_kst():
 # 4. 메인 UI 및 탭별 로직 (Tab 0 ~ Tab 4 완전체)
 # ==============================================================================
 
+st.markdown(
+    """
+    <style>
+        div[data-testid="stRadio"] > label {
+            display: none;
+        }
+
+        div[data-testid="stRadio"] div[role="radiogroup"] {
+            display: flex;
+            gap: 0;
+            align-items: center;
+            border-bottom: 1px solid #e5e7eb;
+            margin-bottom: 28px;
+        }
+
+        div[data-testid="stRadio"] div[role="radiogroup"] label {
+            padding: 12px 12px 11px 12px;
+            margin: 0;
+            border-bottom: 2px solid transparent;
+            border-radius: 0;
+            background: transparent;
+            cursor: pointer;
+        }
+
+        div[data-testid="stRadio"] div[role="radiogroup"] label > div:first-child {
+            display: none;
+        }
+
+        div[data-testid="stRadio"] div[role="radiogroup"] label:has(input:checked) {
+            border-bottom-color: #ff4b4b;
+        }
+
+        div[data-testid="stRadio"] div[role="radiogroup"] label:has(input:checked) p {
+            color: #ff4b4b;
+            font-weight: 500;
+        }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
 menu = st.radio(
     "메뉴",
     ["입금 등록", "발주서 등록", "상세내역 및 정산", "거래처 관리", "환율 분석", "입금 요약"],
