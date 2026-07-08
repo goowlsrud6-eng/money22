@@ -14,8 +14,8 @@ from supabase import create_client, Client
 # ==============================================================================
 st.set_page_config(page_title="💳 입금·발주 관리", layout="wide")
 
-SUPABASE_URL = "https://nbpeuxblyphzmbktcqtq.supabase.co"
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5icGV1eGJseXBoem1ia3RjcXRxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzcwMDc1NTEsImV4cCI6MjA5MjU4MzU1MX0.Q6A8T6_JiPIOBnjf8wKtjWTsRAk-pzvKdSqbfPp-3w4"
+SUPABASE_URL = "https://fejlakmdfymuzcxgnjoe.supabase.co"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZlamxha21kZnltdXpjeGduam9lIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODMzMTIxNjksImV4cCI6MjA5ODg4ODE2OX0.vX9powQMMCJbHwkYMUHDI9fbJ5ke83F-TSkQfMJi5MA"
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 CATEGORIES = ["제작(국내)", "제작(수입)", "사입", "건기식", "물품대", "물류비", "라벨비", "기타"]
@@ -170,10 +170,16 @@ def today_kst():
 # 4. 메인 UI 및 탭별 로직 (Tab 0 ~ Tab 4 완전체)
 # ==============================================================================
 
-tabs = st.tabs(["입금 등록", "발주서 등록", "상세내역 및 정산", "거래처 관리", "환율 분석", "입금 요약"])
+menu = st.radio(
+    "메뉴",
+    ["입금 등록", "발주서 등록", "상세내역 및 정산", "거래처 관리", "환율 분석", "입금 요약"],
+    horizontal=True,
+    label_visibility="collapsed",
+    key="main_menu"
+)
 
 # --- [Tab 0] 입금 내역 등록 (자동 연동 강화 버전) ---
-with tabs[0]:
+if menu == "입금 등록":
     st.header("입금 내역 등록 및 관리")
 
     if 'pay_form_reset_key' not in st.session_state:
@@ -572,7 +578,7 @@ with tabs[0]:
 
 
 # --- [Tab 1] 발주서 등록 및 관리 ---
-with tabs[1]:
+elif menu == "발주서 등록":
     st.header("📦 발주서 등록 및 관리")
 
     if 'order_search_reset_key' not in st.session_state:
@@ -820,7 +826,7 @@ with tabs[1]:
             st.info("내역 없음")
 
 # --- [Tab 2] 상세 내역 및 통합 정산 ---
-with tabs[2]:
+elif menu == "상세내역 및 정산":
     st.header("📋 상세 내역 및 통합 정산")
 
     if 'detail_search_reset_key' not in st.session_state:
@@ -1518,7 +1524,7 @@ with tabs[2]:
         st.info("입금 내역 없음")
         
 # --- [Tab 3] 거래처 관리 ---
-with tabs[3]:
+elif menu == "거래처 관리":
     st.header("🏢 거래처 정보 관리")
     
     # 1. 데이터 로드 및 정렬
@@ -1733,7 +1739,7 @@ with tabs[3]:
     else:
         st.info("📢 등록된 거래처 정보가 없습니다.")
 # --- [Tab 4] 환율 분석 ---
-with tabs[4]:
+elif menu == "환율 분석":
     st.header("📈 환율 데이터 분석 및 관리")
     
     # -------------------------------
@@ -2070,7 +2076,7 @@ with tabs[4]:
         st.info("환율 데이터를 업로드해 주세요.")
         
 # --- [Tab 5] 입금 요약 ---
-with tabs[5]:
+elif menu == "입금 요약":
     st.header("📊 입금 요약")
 
     if 'summary_search_reset_key' not in st.session_state:
